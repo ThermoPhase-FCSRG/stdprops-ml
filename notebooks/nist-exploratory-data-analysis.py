@@ -304,6 +304,36 @@ fig = px.scatter(
 )
 fig.show()
 
+# Checking how the std properties vary with the charge:
+
+# `deltaH0`:
+
+fig = px.box(
+    df_nist_tables_aq_numerical, x="Charge", y="deltaH0", points="all"
+)
+fig.show()
+
+# `deltaG0`:
+
+fig = px.box(
+    df_nist_tables_aq_numerical, x="Charge", y="deltaG0", points="all"
+)
+fig.show()
+
+# `S0`:
+
+fig = px.box(
+    df_nist_tables_aq_numerical, x="Charge", y="S0", points="all"
+)
+fig.show()
+
+# `Cp`:
+
+fig = px.box(
+    df_nist_tables_aq_numerical, x="Charge", y="Cp", points="all"
+)
+fig.show()
+
 # #### Liquid species
 
 # +
