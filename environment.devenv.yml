@@ -1,0 +1,21 @@
+name: stdprops
+channels:
+  - conda-forge
+
+dependencies:
+  # Scientific stack
+  - python
+  - numpy
+  - pandas
+  - scikit-learn
+  - jupyter
+  - jupytext
+  - openpyxl
+
+  # Plots
+  - plotly
+  - seaborn
+  - matplotlib
+
+environment:
+  DATAPATH: {{ root }}/data
