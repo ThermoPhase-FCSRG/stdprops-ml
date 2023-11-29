@@ -69,8 +69,6 @@ df_nist_tables_full.head(30)
 # Replace `-` fields by NaN:
 
 # +
-# df_nist_tables_full.replace("-", np.nan, inplace=True)
-# df_nist_tables_full.replace(r"\*", "", inplace=True)  # remove asterisk highlights as well
 df_nist_tables_full.replace({r"\*": ""}, regex=True, inplace=True)
 df_nist_tables_full.replace("-", np.nan, inplace=True)
 
@@ -140,21 +138,33 @@ df_nist_tables.to_csv(DATA_PATH / "NBS_Tables_preprocessed.csv")
 #
 # Let's check if the numerical data are correlated for the most present states of matter:
 
-# cr     711
-#
-# g      531
-#
-# ai      99
-#
-# l       75
-#
-# ao      38
-#
-# cr2     27
-#
-# g2      14
-
 import plotly.express as px
+
+# #### Overall
+
+# +
+numerical_columns = [
+    "Molar Mass", "deltaH0", "deltaG0", "S0", "Cp", "Charge"
+]
+df_nist_tables_numerical = df_nist_tables[numerical_columns]
+df_nist_tables_numerical = df_nist_tables_numerical.astype(float)
+df_nist_tables[numerical_columns] = df_nist_tables[numerical_columns].astype(float)
+
+df_nist_tables_numerical.head(15)
+# -
+
+# Molar mass distribution:
+
+fig = px.violin(df_nist_tables, y="Molar Mass", box=True, points='all')
+fig.show()
+
+fig = px.histogram(df_nist_tables, x="Molar Mass")
+fig.show()
+
+# Molar mass distribution by state of matter:
+
+fig = px.violin(df_nist_tables, x="State", y="Molar Mass", box=True, points='all')
+fig.show()
 
 # #### Solid (cr)
 
@@ -210,6 +220,11 @@ fig = px.scatter(
 )
 fig.show()
 
+# The distribution of molar mass values:
+
+fig = px.histogram(df_nist_tables_solids_numerical, x="Molar Mass")
+fig.show()
+
 # #### Gas species
 
 # +
@@ -256,6 +271,11 @@ fig.show()
 fig = px.scatter(
     df_nist_tables_gas_numerical, x="Molar Mass", y="Cp"
 )
+fig.show()
+
+# Check the distribution of molar mass values:
+
+fig = px.histogram(df_nist_tables_gas_numerical, x="Molar Mass")
 fig.show()
 
 # #### Aqueous species
@@ -308,29 +328,29 @@ fig.show()
 
 # `deltaH0`:
 
-fig = px.box(
-    df_nist_tables_aq_numerical, x="Charge", y="deltaH0", points="all"
+fig = px.violin(
+    df_nist_tables_aq_numerical, x="Charge", y="deltaH0", box=True, points="all"
 )
 fig.show()
 
 # `deltaG0`:
 
-fig = px.box(
-    df_nist_tables_aq_numerical, x="Charge", y="deltaG0", points="all"
+fig = px.violin(
+    df_nist_tables_aq_numerical, x="Charge", y="deltaG0", points="all", box=True
 )
 fig.show()
 
 # `S0`:
 
-fig = px.box(
-    df_nist_tables_aq_numerical, x="Charge", y="S0", points="all"
+fig = px.violin(
+    df_nist_tables_aq_numerical, x="Charge", y="S0", points="all", box=True
 )
 fig.show()
 
 # `Cp`:
 
-fig = px.box(
-    df_nist_tables_aq_numerical, x="Charge", y="Cp", points="all"
+fig = px.violin(
+    df_nist_tables_aq_numerical, x="Charge", y="Cp", points="all", box=True
 )
 fig.show()
 
@@ -381,3 +401,218 @@ fig = px.scatter(
 fig.show()
 
 
+
+# ### Std thermodynamic properties consistency
+#
+# The goal here is to perform the G-H-S (standard free Gibbs energy of formation, enthalpy, and entropy). These quantities are related through the formula:
+#
+# \begin{equation*}
+# \Delta_{\mathrm{f}} G^{\circ}=\Delta_{\mathrm{f}} H^{\circ}-T \Delta_{\mathrm{f}} S^{\circ}
+# \end{equation*}
+#
+# With $\Delta_{\mathrm{f}} S^{\circ}$ calculated as
+#
+# \begin{equation*}
+# \Delta_{\mathrm{f}} S^{\circ} = S^{\circ}_{\text{species}} - \sum_{e \in \text{Elements}}S^{\circ}_e
+# \end{equation*}
+#
+# The reference temperature is set as $T = 298.15$ K.
+#
+# However, to check the consistency we need to retrieve the chemical formulas and the associated elements, and then compute the entropy from the elements. This required and additional database of elements collected from [CHNOSZ](https://github.com/jedick/CHNOSZ/blob/main/inst/extdata/thermo/element.csv). Let's use it as a base to build an equivalent but using NIST/NBS data.
+
+# Reading the CHNOSZ element data:
+
+# +
+df_chnosz_elements = pd.read_csv(DATA_PATH / "chnosz_elements (modified).csv")
+
+df_chnosz_elements
+
+# +
+map_states_chnosz_to_nist = {
+    "gas": "g",
+    "liq": "l",
+    "aq": "ao"
+}
+
+df_chnosz_elements.replace(map_states_chnosz_to_nist, inplace=True)
+
+df_chnosz_elements.head(20)
+# -
+
+# Now, we replicate the same structure but collecting the data from NIST/NBS tables:
+
+df_nist_tables
+
+# +
+nist_elements = {
+    "element": [],
+    "state": [],
+    "S0": [],
+}
+
+for index, row in df_chnosz_elements.iterrows():
+    element_name = row["element"]
+    if element_name == "Z":
+        continue
+    
+    element_state = row["state"]
+    element_n = row["n"]
+    suffix_name = element_n if int(element_n) > 1 else ""
+    nist_name = element_name + str(suffix_name)
+    
+    df_corresponding_nist = df_nist_tables.loc[
+        (df_nist_tables["Formula"] == nist_name) & (df_nist_tables["State"] == element_state)
+    ]
+    
+    nist_S0_value = df_corresponding_nist["S0"].values
+    element_S0 = nist_S0_value[0] / element_n if len(nist_S0_value) > 0 else None
+    
+    nist_elements["element"].append(element_name)
+    nist_elements["state"].append(element_state)
+    nist_elements["S0"].append(element_S0)
+
+df_nist_elements = pd.DataFrame.from_dict(nist_elements)
+df_nist_elements.dropna(inplace=True)
+df_nist_elements.to_csv("elements_nist.csv")  # check if needed
+df_nist_elements
+
+
+# -
+
+# Define a convenient function to retrieve the amount of each element in a given chemical formula:
+
+def parse_chemical_formula(formula: str) -> dict[str, int]:
+    """
+    Convenient function to parser and get the amount of elements in
+    chemical species formulas.
+    """
+    import re
+    from collections import defaultdict
+    
+    # Function to parse a molecule or sub-molecule
+    def parse_molecule(molecule, multiplier=1):
+        elements = re.findall(r'([A-Z][a-z]*)(\d*)', molecule)
+        for element, count in elements:
+            count = int(count) if count else 1
+            element_counts[element] += count * multiplier
+
+    # Remove HTML charge notations
+    formula = re.sub(r'<[^>]+>', '', formula)
+
+    # Split the formula into molecules and process each part
+    element_counts = defaultdict(int)
+    molecules = formula.split('·')
+    
+    for molecule in molecules:
+        # Handle molecules with and without parentheses
+        if '(' in molecule:
+            while '(' in molecule:
+                # Find and replace the innermost parenthetical expression
+                sub_molecule, sub_multiplier = re.search(r'\(([A-Za-z0-9]+)\)(\d*)', molecule).groups()
+                sub_multiplier = int(sub_multiplier) if sub_multiplier else 1
+                molecule = re.sub(r'\(([A-Za-z0-9]+)\)(\d*)', '', molecule, 1)
+                parse_molecule(sub_molecule, sub_multiplier)
+        
+        # Handle preffix-like multiplier
+        else:
+            sub_multiplier, sub_molecule = re.search(r'(\d*)([A-Za-z0-9]+)', molecule).groups()
+            sub_multiplier = int(sub_multiplier) if sub_multiplier else 1
+            molecule = re.sub(r'(\d*)([A-Za-z0-9]+)', '', molecule, 1)
+            parse_molecule(sub_molecule, sub_multiplier)
+            
+        # Process the remaining parts of the molecule
+        parse_molecule(molecule)
+
+    return dict(element_counts)
+
+
+# Iterate over all NIST data and compute the GHS residual:
+
+df_nist_tables.head(30)
+
+# +
+aqueous_states = [
+    "ai", "ao", "aq", "ai2", "ao2", "aq2", "aq3", "ao4", "aq4"
+]
+
+H2_species_refdata = df_nist_tables.loc[
+    (df_nist_tables["Formula"] == "H2") & (df_nist_tables["State"] == "g")
+]
+
+GHS_residuals = []
+T = 298.15
+for index, row in df_nist_tables.iterrows():
+    species_formula = row["Formula"]
+    species_state = row["State"]
+    is_species_aqueous = species_state in aqueous_states
+    elements_in_species = parse_chemical_formula(species_formula)
+    
+    species_dG0 = row["deltaG0"]
+    species_dH0 = row["deltaH0"]
+    species_S0 = row["S0"]
+    
+    elements_S0 = 0.0
+    try:
+        for element, count in elements_in_species.items():
+            df_element = df_nist_elements.loc[df_nist_elements['element'] == element]
+            elements_S0 += df_element['S0'].values[0] * count
+        
+        if is_species_aqueous:
+            species_charge = row["Charge"]
+            H2_g_S0 = H2_species_refdata['S0'].values[0]
+            elements_S0 += (species_charge / 2) * H2_g_S0 * T
+    except IndexError:
+        print(f"Skipping species {species_formula}: element {element} is lacking")
+        elements_S0 = np.nan
+    
+    species_dS0 = species_S0 - elements_S0
+    
+    GHS_residual = species_dG0 * 1000 - species_dH0 * 1000 + T * species_dS0
+    GHS_residuals.append(GHS_residual)
+    
+# GHS_residuals
+
+# +
+df_nist_tables["GHS residual"] = GHS_residuals
+
+df_nist_tables.head(20)
+# -
+
+fig = px.histogram(df_nist_tables, x="GHS residual")
+fig.show()
+
+# +
+df_nist_tables_inconsistent_all = df_nist_tables[abs(df_nist_tables['GHS residual']) > 200]
+
+df_nist_tables_inconsistent_all.State.value_counts()
+# -
+
+# Check the consistency only for valid molecules (that can be formed or composed):
+
+# +
+df_nist_tables_inconsistent = df_nist_tables[
+    (abs(df_nist_tables['GHS residual']) > 200) & (df_nist_tables['Charge'] == 0.0)
+]
+
+df_nist_tables_inconsistent
+# -
+
+df_nist_tables_inconsistent["State"].value_counts()
+
+fig = px.histogram(df_nist_tables_inconsistent, x="GHS residual")
+fig.show()
+
+# Now, let's check the consistent species:
+
+# +
+df_nist_tables_consistent = df_nist_tables[
+    (abs(df_nist_tables['GHS residual']) < 50) & (df_nist_tables['Charge'] == 0.0)
+]
+
+df_nist_tables_consistent.shape
+# -
+
+df_nist_tables_consistent["State"].value_counts()
+
+fig = px.histogram(df_nist_tables_consistent, x="GHS residual")
+fig.show()
