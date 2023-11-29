@@ -16,6 +16,11 @@ dependencies:
   - plotly
   - seaborn
   - matplotlib
+  
+  # Extra deps with pip (unfortunately, not recommended)
+  - pip
+  - pip:
+    - kaleido
 
 environment:
   DATAPATH: {{ root }}/data
