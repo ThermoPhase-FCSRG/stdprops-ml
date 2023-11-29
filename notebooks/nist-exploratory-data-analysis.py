@@ -22,10 +22,16 @@
 # +
 import numpy as np
 import pandas as pd
+
+import plotly.express as px
+import plotly.io as pio
+
 from pathlib import Path
 import os
 
 DATA_PATH = Path(os.environ.get("DATAPATH"))
+
+pio.renderers.default = "png"
 # -
 
 # Reading the raw data:
@@ -137,8 +143,6 @@ df_nist_tables.to_csv(DATA_PATH / "NBS_Tables_preprocessed.csv")
 # ### Check correlations
 #
 # Let's check if the numerical data are correlated for the most present states of matter:
-
-import plotly.express as px
 
 # #### Overall
 
