@@ -441,8 +441,6 @@ df_chnosz_elements.head(20)
 
 # Now, we replicate the same structure but collecting the data from NIST/NBS tables:
 
-df_nist_tables
-
 # +
 nist_elements = {
     "element": [],
@@ -473,7 +471,7 @@ for index, row in df_chnosz_elements.iterrows():
 
 df_nist_elements = pd.DataFrame.from_dict(nist_elements)
 df_nist_elements.dropna(inplace=True)
-df_nist_elements.to_csv("elements_nist.csv")  # check if needed
+df_nist_elements.to_csv(DATA_PATH / "nist_elements.csv")  # check if needed
 df_nist_elements
 
 
