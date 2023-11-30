@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 
 import plotly.express as px
+import plotly.graph_objects as go
 import plotly.io as pio
 
 from pathlib import Path
@@ -138,6 +139,241 @@ df_nist_tables.head(30)
 
 df_nist_tables.to_csv(DATA_PATH / "NBS_Tables_preprocessed.csv")
 
+
+# ### Extending the Database with new features
+
+# However, only the data provided in NIST/NBS as "it is" may be insuficient. So let's extend it with Se (the sum of the entropy of each element in the species).
+
+# #### Adding Se and number of elements of each chemical species
+
+# Convenient function to parse chemical species formulas and retrieve the elements that compose the formula:
+
+def parse_chemical_formula(formula: str) -> dict[str, int]:
+    """
+    Convenient function to parser and get the amount of elements in
+    chemical species formulas.
+    """
+    import re
+    from collections import defaultdict
+    
+    # Function to parse a molecule or sub-molecule
+    def parse_molecule(molecule, multiplier=1):
+        elements = re.findall(r'([A-Z][a-z]*)(\d*)', molecule)
+        for element, count in elements:
+            count = int(count) if count else 1
+            element_counts[element] += count * multiplier
+
+    # Remove HTML charge notations
+    formula = re.sub(r'<[^>]+>', '', formula)
+
+    # Split the formula into molecules and process each part
+    element_counts = defaultdict(int)
+    molecules = formula.split('·')
+    
+    for molecule in molecules:
+        # Handle molecules with and without parentheses
+        if '(' in molecule:
+            while '(' in molecule:
+                # Find and replace the innermost parenthetical expression
+                sub_molecule, sub_multiplier = re.search(r'\(([A-Za-z0-9]+)\)(\d*)', molecule).groups()
+                sub_multiplier = int(sub_multiplier) if sub_multiplier else 1
+                molecule = re.sub(r'\(([A-Za-z0-9]+)\)(\d*)', '', molecule, 1)
+                parse_molecule(sub_molecule, sub_multiplier)
+        
+        # Handle preffix-like multiplier
+        else:
+            sub_multiplier, sub_molecule = re.search(r'(\d*)([A-Za-z0-9]+)', molecule).groups()
+            sub_multiplier = int(sub_multiplier) if sub_multiplier else 1
+            molecule = re.sub(r'(\d*)([A-Za-z0-9]+)', '', molecule, 1)
+            parse_molecule(sub_molecule, sub_multiplier)
+            
+        # Process the remaining parts of the molecule
+        parse_molecule(molecule)
+
+    return dict(element_counts)
+
+
+# Reading elements' data (with the entropy of each element) from [CHNOSZ](https://github.com/jedick/CHNOSZ/blob/main/inst/extdata/thermo/element.csv). Use it to create an equivalent using NIST/NBS tables data (it means that we recover the Se using the values provided in the NIST tables).
+
+# +
+df_chnosz_elements = pd.read_csv(DATA_PATH / "chnosz_elements (modified).csv")
+
+df_chnosz_elements
+
+# +
+map_states_chnosz_to_nist = {
+    "gas": "g",
+    "liq": "l",
+    "aq": "ao"
+}
+
+df_chnosz_elements.replace(map_states_chnosz_to_nist, inplace=True)
+
+df_chnosz_elements.head(20)
+# -
+
+# Replicating the same structure of CHNOSZ element data, but now using values collected from NIST tables:
+
+# +
+nist_elements = {
+    "element": [],
+    "state": [],
+    "S0": [],
+}
+
+for index, row in df_chnosz_elements.iterrows():
+    element_name = row["element"]
+    if element_name == "Z":
+        continue
+    
+    element_state = row["state"]
+    element_n = row["n"]
+    suffix_name = element_n if int(element_n) > 1 else ""
+    nist_name = element_name + str(suffix_name)
+    
+    df_corresponding_nist = df_nist_tables.loc[
+        (df_nist_tables["Formula"] == nist_name) & (df_nist_tables["State"] == element_state)
+    ]
+    
+    nist_S0_value = df_corresponding_nist["S0"].values.astype(np.float64)
+    element_S0 = nist_S0_value[0] / element_n if len(nist_S0_value) > 0 else None
+    
+    nist_elements["element"].append(element_name)
+    nist_elements["state"].append(element_state)
+    nist_elements["S0"].append(element_S0)
+
+df_nist_elements = pd.DataFrame.from_dict(nist_elements)
+df_nist_elements.dropna(inplace=True)
+df_nist_elements.to_csv(DATA_PATH / "nist_elements.csv")  # check if needed
+df_nist_elements
+# -
+
+# Before continue, let's compare the NIST element data against the CHNOSZ corresponding data. To do so, we need to perform some manipulations.
+
+# +
+df_chnosz_elements_in_nist_tmp = df_chnosz_elements[
+    df_chnosz_elements["element"].isin(list(df_nist_elements["element"].values))
+]
+df_chnosz_elements_in_nist_tmp.rename(columns={"s": "S0"}, inplace=True)
+df_chnosz_elements_in_nist_tmp = df_chnosz_elements_in_nist_tmp[
+    list(df_nist_elements.columns) + ["n"]
+]
+
+df_chnosz_elements_in_nist_tmp.reset_index(inplace=True, drop=True)
+
+df_chnosz_elements_in_nist_tmp
+
+# +
+# Convert CHNOSZ S0 from cal/mol/K to J/mol/K
+cal_to_J = 4.184
+df_chnosz_elements_in_nist = df_chnosz_elements_in_nist_tmp.copy(deep=True)
+df_chnosz_elements_in_nist.loc[:, "S0"] = cal_to_J * df_chnosz_elements_in_nist_tmp.loc[:, "S0"].astype(np.float64).values
+
+# Removing n by dividing S0 / n
+for index, row in df_chnosz_elements_in_nist.iterrows():
+    n_in_row = row.n
+    if row.n > 1:
+        df_chnosz_elements_in_nist.loc[index, "S0"] /= n_in_row
+
+df_chnosz_elements_in_nist.drop(columns=["n"], inplace=True)
+df_chnosz_elements_in_nist
+# -
+
+# We are now able to compare the elements' data:
+
+# +
+df_nist_elements_sorted = df_nist_elements.sort_values(by=["element"], ignore_index=True)
+df_chnosz_elements_in_nist_sorted = df_chnosz_elements_in_nist.sort_values(by=["element"], ignore_index=True)
+df_diff = df_nist_elements_sorted.compare(df_chnosz_elements_in_nist_sorted, keep_equal=True, keep_shape=True)
+
+df_diff
+
+# +
+fig = go.Figure()
+
+fig1 = go.Scatter(
+    x=df_diff.S0["self"], 
+    y=df_diff.S0["other"],
+    mode='markers',
+)
+
+fig2 = go.Scatter(
+    x=df_diff.S0["other"], 
+    y=df_diff.S0["other"],
+    mode='lines',
+    line=dict(color="black", dash='dash'),
+)
+fig.add_traces([fig1, fig2])
+
+fig.update_layout(
+    title="Comparison of S0 values between NIST and CHNOSZ",
+    xaxis_title="NIST elements' S0 values",
+    yaxis_title="CHNOSZ elements' S0 values",
+    showlegend=False,
+    font=dict(
+        size=18,
+    )
+)
+
+fig.show()
+
+# +
+element_S0_discrepancies = df_diff.S0["self"].values - df_diff.S0["other"].values
+
+element_S0_discrepancies_dict = {
+    "element": df_nist_elements_sorted.element.values,
+    "S0 discrepancy": element_S0_discrepancies
+}
+df_element_S0_discrepancies = pd.DataFrame.from_dict(element_S0_discrepancies_dict)
+
+df_element_S0_discrepancies
+# -
+
+df_element_S0_discrepancies[
+    np.abs(df_element_S0_discrepancies["S0 discrepancy"]) > 1
+]
+
+# Only `Pa` and `Ra` have a major discrepancy compared to NIST values. However, these species are rather uncommon and they present no harm to our study. Let's move on to the extension of NIST database with new features.
+#
+# Iterating over the NIST database and add Se and the number of elements for each species in the `DataFrame`:
+
+# +
+Se_species = []
+n_elements_in_species = []
+for index, row in df_nist_tables.iterrows():
+    species_formula = row["Formula"]
+    elements_in_species = parse_chemical_formula(species_formula)
+    
+    elements_S0 = 0.0
+    n_elements = 0.0
+    try:
+        for element, count in elements_in_species.items():
+            df_element = df_nist_elements.loc[df_nist_elements['element'] == element]
+            elements_S0 += df_element['S0'].values[0] * count
+            n_elements += count
+
+    except IndexError:
+        print(f"Skipping species {species_formula}: element {element} is lacking")
+        elements_S0 = np.nan
+        n_elements = np.nan
+    
+    Se_species.append(elements_S0)
+    n_elements_in_species.append(n_elements)
+    
+df_nist_tables["Se"] = Se_species
+df_nist_tables["Num Elements"] = n_elements_in_species
+# -
+
+df_nist_tables.head(20)
+
+# Now, let's clean up and drop the species that we do not have values for Se or composed of unknown elements:
+
+# +
+df_nist_tables.dropna(inplace=True, ignore_index=True)
+
+df_nist_tables
+# -
+
 # ## Data Exploration
 
 # ### Check correlations
@@ -148,7 +384,7 @@ df_nist_tables.to_csv(DATA_PATH / "NBS_Tables_preprocessed.csv")
 
 # +
 numerical_columns = [
-    "Molar Mass", "deltaH0", "deltaG0", "S0", "Cp", "Charge"
+    "Molar Mass", "deltaH0", "deltaG0", "S0", "Cp", "Charge", "Se", "Num Elements"
 ]
 df_nist_tables_numerical = df_nist_tables[numerical_columns]
 df_nist_tables_numerical = df_nist_tables_numerical.astype(float)
@@ -170,28 +406,39 @@ fig.show()
 fig = px.violin(df_nist_tables, x="State", y="Molar Mass", box=True, points='all')
 fig.show()
 
+# Check for (linear) correlations with Pearson's approach
+
+# +
+df_nist_tables_numerical = df_nist_tables[numerical_columns]
+df_nist_tables_numerical = df_nist_tables_numerical.astype(float)
+
+df_nist_tables_numerical.head(15)
+# -
+
+df_all_corr = df_nist_tables_numerical.corr(method='spearman')
+
+fig = px.imshow(df_all_corr, text_auto=True, aspect="auto", color_continuous_scale='balance', zmin=-1, zmax=1)
+fig.show()
+
 # #### Solid (cr)
 
 # +
 df_nist_tables_solids = df_nist_tables[
-    df_nist_tables["State"].isin(["cr", "cr2"])
+    df_nist_tables["State"].isin(["cr", "cr2", "cr3", "cr4"])
 ]
 
-df_nist_tables_solids
+df_nist_tables_solids.head(20)
 
 # +
-numerical_columns = [
-    "Molar Mass", "deltaH0", "deltaG0", "S0", "Cp", "Charge"
-]
 df_nist_tables_solids_numerical = df_nist_tables_solids[numerical_columns]
 df_nist_tables_solids_numerical = df_nist_tables_solids_numerical.astype(float)
 
 df_nist_tables_solids_numerical.head(15)
 # -
 
-df_solids_corr = df_nist_tables_solids_numerical.corr()
+df_solids_corr = df_nist_tables_solids_numerical.corr(method='spearman')
 
-fig = px.imshow(df_solids_corr, text_auto=True, aspect="auto", color_continuous_scale='ice', zmin=-2)
+fig = px.imshow(df_solids_corr, text_auto=True, aspect="auto", color_continuous_scale='balance', zmin=-1, zmax=1)
 fig.show()
 
 # The correlation between the std properties are expected! However, given the molar mass and charge (which does not apply to solids), we want to predict the std properties. Let's continue and check for the other states.
@@ -242,9 +489,9 @@ df_nist_tables_gas_numerical = df_nist_tables_gas_numerical.astype(float)
 df_nist_tables_gas_numerical.head(15)
 # -
 
-df_gas_corr = df_nist_tables_gas_numerical.corr()
+df_gas_corr = df_nist_tables_gas_numerical.corr(method='spearman')
 
-fig = px.imshow(df_gas_corr, text_auto=True, aspect="auto", color_continuous_scale='ice', zmin=-2)
+fig = px.imshow(df_gas_corr, text_auto=True, aspect="auto", color_continuous_scale='balance', zmin=-1, zmax=1)
 fig.show()
 
 # Checking how the std properties vary with the molar mass:
@@ -293,9 +540,9 @@ df_nist_tables_aq_numerical = df_nist_tables_aq[numerical_columns]
 df_nist_tables_aq_numerical = df_nist_tables_aq_numerical.astype(float)
 # -
 
-df_aq_corr = df_nist_tables_aq_numerical.corr()
+df_aq_corr = df_nist_tables_aq_numerical.corr(method='spearman')
 
-fig = px.imshow(df_aq_corr, text_auto=True, aspect="auto", color_continuous_scale='ice', zmin=-2)
+fig = px.imshow(df_aq_corr, text_auto=True, aspect="auto", color_continuous_scale='balance', zmin=-1, zmax=1)
 fig.show()
 
 # Checking how the std properties vary with the molar mass:
@@ -369,9 +616,9 @@ df_nist_tables_liq_numerical = df_nist_tables_liq[numerical_columns]
 df_nist_tables_liq_numerical = df_nist_tables_liq_numerical.astype(float)
 # -
 
-df_liq_corr = df_nist_tables_liq_numerical.corr()
+df_liq_corr = df_nist_tables_liq_numerical.corr(method='spearman')
 
-fig = px.imshow(df_liq_corr, text_auto=True, aspect="auto", color_continuous_scale='ice', zmin=-2)
+fig = px.imshow(df_liq_corr, text_auto=True, aspect="auto", color_continuous_scale='balance', zmin=-1, zmax=1)
 fig.show()
 
 # Checking how the std properties vary with the molar mass:
@@ -422,115 +669,9 @@ fig.show()
 #
 # The reference temperature is set as $T = 298.15$ K.
 #
-# However, to check the consistency we need to retrieve the chemical formulas and the associated elements, and then compute the entropy from the elements. This required and additional database of elements collected from [CHNOSZ](https://github.com/jedick/CHNOSZ/blob/main/inst/extdata/thermo/element.csv). Let's use it as a base to build an equivalent but using NIST/NBS data.
-
-# Reading the CHNOSZ element data:
-
-# +
-df_chnosz_elements = pd.read_csv(DATA_PATH / "chnosz_elements (modified).csv")
-
-df_chnosz_elements
-
-# +
-map_states_chnosz_to_nist = {
-    "gas": "g",
-    "liq": "l",
-    "aq": "ao"
-}
-
-df_chnosz_elements.replace(map_states_chnosz_to_nist, inplace=True)
-
-df_chnosz_elements.head(20)
-# -
-
-# Now, we replicate the same structure but collecting the data from NIST/NBS tables:
-
-# +
-nist_elements = {
-    "element": [],
-    "state": [],
-    "S0": [],
-}
-
-for index, row in df_chnosz_elements.iterrows():
-    element_name = row["element"]
-    if element_name == "Z":
-        continue
-    
-    element_state = row["state"]
-    element_n = row["n"]
-    suffix_name = element_n if int(element_n) > 1 else ""
-    nist_name = element_name + str(suffix_name)
-    
-    df_corresponding_nist = df_nist_tables.loc[
-        (df_nist_tables["Formula"] == nist_name) & (df_nist_tables["State"] == element_state)
-    ]
-    
-    nist_S0_value = df_corresponding_nist["S0"].values
-    element_S0 = nist_S0_value[0] / element_n if len(nist_S0_value) > 0 else None
-    
-    nist_elements["element"].append(element_name)
-    nist_elements["state"].append(element_state)
-    nist_elements["S0"].append(element_S0)
-
-df_nist_elements = pd.DataFrame.from_dict(nist_elements)
-df_nist_elements.dropna(inplace=True)
-df_nist_elements.to_csv(DATA_PATH / "nist_elements.csv")  # check if needed
-df_nist_elements
-
-
-# -
-
-# Define a convenient function to retrieve the amount of each element in a given chemical formula:
-
-def parse_chemical_formula(formula: str) -> dict[str, int]:
-    """
-    Convenient function to parser and get the amount of elements in
-    chemical species formulas.
-    """
-    import re
-    from collections import defaultdict
-    
-    # Function to parse a molecule or sub-molecule
-    def parse_molecule(molecule, multiplier=1):
-        elements = re.findall(r'([A-Z][a-z]*)(\d*)', molecule)
-        for element, count in elements:
-            count = int(count) if count else 1
-            element_counts[element] += count * multiplier
-
-    # Remove HTML charge notations
-    formula = re.sub(r'<[^>]+>', '', formula)
-
-    # Split the formula into molecules and process each part
-    element_counts = defaultdict(int)
-    molecules = formula.split('·')
-    
-    for molecule in molecules:
-        # Handle molecules with and without parentheses
-        if '(' in molecule:
-            while '(' in molecule:
-                # Find and replace the innermost parenthetical expression
-                sub_molecule, sub_multiplier = re.search(r'\(([A-Za-z0-9]+)\)(\d*)', molecule).groups()
-                sub_multiplier = int(sub_multiplier) if sub_multiplier else 1
-                molecule = re.sub(r'\(([A-Za-z0-9]+)\)(\d*)', '', molecule, 1)
-                parse_molecule(sub_molecule, sub_multiplier)
-        
-        # Handle preffix-like multiplier
-        else:
-            sub_multiplier, sub_molecule = re.search(r'(\d*)([A-Za-z0-9]+)', molecule).groups()
-            sub_multiplier = int(sub_multiplier) if sub_multiplier else 1
-            molecule = re.sub(r'(\d*)([A-Za-z0-9]+)', '', molecule, 1)
-            parse_molecule(sub_molecule, sub_multiplier)
-            
-        # Process the remaining parts of the molecule
-        parse_molecule(molecule)
-
-    return dict(element_counts)
-
+# However, to check the consistency we need to retrieve the chemical formulas and the associated elements, and then compute the entropy from the elements. This required and additional database of elements collected from [CHNOSZ](https://github.com/jedick/CHNOSZ/blob/main/inst/extdata/thermo/element.csv). This step is already done in the extension of the NIST DB features in the beginning of this notebook. So we will move to calculate the GHS residuals.
 
 # Iterate over all NIST data and compute the GHS residual:
-
-df_nist_tables.head(30)
 
 # +
 aqueous_states = [
