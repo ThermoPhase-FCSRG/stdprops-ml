@@ -20,10 +20,10 @@ A set of MLP approaches exploring different features are provided in `notebooks`
 The main milestones of this research are the following:
 
 * [X] EDA of NIST/NBS table.
-* [X] ML modeling and predictions using Molar Mass and Species Charges to perform predictions.
-* [X] ML modeling and predictions using Molar Mass, Species Charges, and State of Matter to perform predictions.
-* [X] ML modeling and predictions using Molar Mass, Species Charges, State of Matter, Entropy of Elements, and Number of Elements to perform predictions.
-* [ ] Consistent ML modeling and predictions using Molar Mass, Species Charges, State of Matter, Entropy of Elements, and Number of Elements to perform predictions. In this approach, the G-H-S relationship (as described in the [NIST/NBS tables original report](https://srd.nist.gov/JPCRD/jpcrdS2Vol11.pdf)) is incorporated in the loss function, resulting in thermodynamically consistent predictions.
+* [X] ML modeling and predictions using Molar Mass and Species Charges as features.
+* [X] ML modeling and predictions using Molar Mass, Species Charges, and State of Matter as features.
+* [X] ML modeling and predictions using Molar Mass, Species Charges, State of Matter, Entropy of Elements, and Number of Elements as features.
+* [ ] Consistent ML modeling and predictions using Molar Mass, Species Charges, State of Matter, Entropy of Elements, and Number of Elements as features. In this approach, the G-H-S relationship (as described in the [NIST/NBS tables original report](https://srd.nist.gov/JPCRD/jpcrdS2Vol11.pdf)) is incorporated in the loss function, resulting in thermodynamically consistent predictions.
 * [ ] (WIP) Create a reproducible environment to run the studies and record it in Zenodo.
 * [ ] Write a manuscript (preprint) about the research.
 * [ ] Submit the manuscript to a related Journal.
