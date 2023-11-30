@@ -688,3 +688,78 @@ fig.show()
 
 fig = px.histogram(df_target_errors, x="Cp rel. error", nbins=80)
 fig.show()
+
+# ### Verifying the consistency of the predicted values
+#
+# To evaluate the quality of the predictions from a thermodynamic point of view, we should assess the GHS residual to check if the predictions are consistent.
+
+# +
+df_predicted_species = df_nist_stdprops.loc[X_test_rescaled.index, ["Formula", "Molar Mass", "Se"]]
+for target in list(df_y_predict.columns):
+    df_predicted_species.loc[:, target] = df_y_predict.loc[:, target].values
+    
+df_predicted_species
+
+# +
+T = 298.15  # in K
+predicted_GHS_residuals = []
+expected_GHS_residuals = []
+df_expected_stdprops = df_nist_stdprops.loc[X_test_rescaled.index, :]
+for index, row in df_predicted_species.iterrows():
+    G0_predicted = row["deltaG0"] * 1000
+    H0_predicted = row["deltaH0"] * 1000
+    S0_predicted = row["S0"]
+    Se_predicted = row["Se"]
+    GHS_residual_predicted = G0_predicted - H0_predicted + T * (S0_predicted - Se_predicted)
+    predicted_GHS_residuals.append(GHS_residual_predicted)
+    
+    G0_expected = df_expected_stdprops.loc[index, "deltaG0"] * 1000
+    H0_expected = df_expected_stdprops.loc[index, "deltaH0"] * 1000
+    S0_expected = df_expected_stdprops.loc[index, "S0"]
+    Se_expected = df_expected_stdprops.loc[index, "Se"]
+    GHS_residual_expected = G0_expected - H0_expected + T * (S0_expected - Se_expected)
+    expected_GHS_residuals.append(GHS_residual_expected)
+    
+df_predicted_species["GHS residual"] = predicted_GHS_residuals
+df_expected_stdprops["GHS residual"] = expected_GHS_residuals
+df_predicted_species
+# -
+
+df_expected_stdprops
+
+# #### Visual verification
+
+# +
+fig = go.Figure()
+
+fig1 = go.Scatter(
+    x=df_expected_stdprops["GHS residual"], 
+    y=df_predicted_species["GHS residual"],
+    mode='markers',
+)
+
+fig2 = go.Scatter(
+    x=df_expected_stdprops["GHS residual"], 
+    y=df_expected_stdprops["GHS residual"], 
+    line=dict(color="black", dash='dash'),
+    mode='lines',
+)
+fig.add_traces([fig1, fig2])
+
+fig.update_layout(
+    title="Actual vs Predicted GHS residuals",
+    xaxis_title="Actual GHS residuals",
+    yaxis_title="Predicted GHS residuals",
+    showlegend=False,
+    font=dict(
+        size=18,
+    )
+)
+
+fig.show()
+# -
+
+fig = px.histogram(df_predicted_species, x="GHS residual")
+fig.show()
+
+# As expected, thermodynamical inconsistencies are present in the prediction. The cause of such a behavior is that no thermodynamic knowledge in the data provides sufficient information for the machine learning algorithm actually learn about intrinsic relations that must be satisfied (like the GHS residual). To learn "physics-based" relationships from the data, a huge quantity of data should be provided to the ML algorithm. Moreover, the data should intrinsically satisfy the physics-based relationships. An alternative (to be explored in the future) is to incorporate the physics-based relationships in the loss function as residual terms, enforcing that the predictions should vanish these terms to minimize the loss function. This is the main principle behind the so-called Physics-Informed Neural Networks (PINNs).
