@@ -332,7 +332,7 @@ early_stopping = skorch.callbacks.EarlyStopping(
 # * The reduced NN model:
 
 # +
-max_epochs_gs = 2000
+max_epochs_gs = 3000
 rel_error_stop_criterion_gs = 1e-5
 min_percentage_of_num_epochs_gs = 0.1
 early_stopping_gs = skorch.callbacks.EarlyStopping(
@@ -356,15 +356,17 @@ net_gs_fit = CustomNetThermodynamicInformed(
 
 # * Setting the Randomized Search Cross-Validation to explore the parameters:
 
+ss_generator = ShuffleSplit(n_splits=2, test_size=test_size, random_state=1)
+
 # +
-lr_values = np.random.uniform(1e-7, 1e-1, 100).tolist()
-lambda1_values = np.random.uniform(0.001, 1e3, 100).tolist()
+lr_values = np.random.uniform(1e-7, 1e-1, 20).tolist()
+lambda1_values = np.random.uniform(0.001, 5e1, 20).tolist()
 params = {
     'lr': lr_values,
     'lambda1': lambda1_values,
 }
 
-gs = RandomizedSearchCV(net_gs_fit, params, cv=4, n_iter=20, random_state=42, verbose=3)
+gs = RandomizedSearchCV(net_gs_fit, params, cv=ss_generator, n_iter=10, random_state=42, verbose=3)
 # -
 
 # * Search the best parameters using the reduced model:
@@ -376,6 +378,11 @@ gs.fit(
     X_full_rescaled.to_numpy().astype(np.float32),
     y.to_numpy().astype(np.float32)
 )
+
+# +
+df_parameter_search = pd.DataFrame.from_dict(gs.cv_results_)
+
+df_parameter_search
 # -
 
 # * Collecting the results:
@@ -1144,5 +1151,6 @@ fig.update_layout(
     )
 )
 fig.update_traces(opacity=0.75)
+fig.add_vline(x=0.0, line_width=3, line_dash="dash", line_color="black")
 
 fig.show()
