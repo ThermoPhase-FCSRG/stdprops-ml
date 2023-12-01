@@ -3,14 +3,23 @@ channels:
   - conda-forge
 
 dependencies:
+  # General
+  - python
+  - jupyter
+  - jupytext
+  - tqdm
+
   # Scientific stack
   - python
   - numpy
   - pandas
   - scikit-learn
-  - jupyter
-  - jupytext
   - openpyxl
+  - skorch
+  - pytorch
+
+  # GPU to accelerate Torch
+  - cudatoolkit
 
   # Plots
   - plotly
