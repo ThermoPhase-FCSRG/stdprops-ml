@@ -354,13 +354,13 @@ net_gs_fit = CustomNetThermodynamicInformed(
 )
 # -
 
-# * Setting the Randomized Search Cross-Validation to explore the parameters:
+# * Setting the Randomized Search Cross-Validation to explore the parameters in a 3-folds setting:
 
-ss_generator = ShuffleSplit(n_splits=2, test_size=test_size, random_state=1)
+ss_generator = ShuffleSplit(n_splits=3, test_size=test_size, random_state=1)
 
 # +
-lr_values = np.random.uniform(1e-7, 1e-1, 20).tolist()
-lambda1_values = np.random.uniform(0.001, 5e1, 20).tolist()
+lr_values = np.random.uniform(1e-5, 1e-1, 25).tolist()
+lambda1_values = np.random.uniform(0.001, 5e1, 25).tolist()
 params = {
     'lr': lr_values,
     'lambda1': lambda1_values,
