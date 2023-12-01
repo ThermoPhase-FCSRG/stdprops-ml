@@ -319,7 +319,7 @@ class TqdmCallback(Callback):
 max_epochs = 20000
 # max_epochs = 10
 rel_error_stop_criterion = 1e-8
-min_percentage_of_num_epochs = 0.2
+min_percentage_of_num_epochs = 0.25
 early_stopping = skorch.callbacks.EarlyStopping(
     patience=int(min_percentage_of_num_epochs * max_epochs), 
     threshold=rel_error_stop_criterion
@@ -354,13 +354,13 @@ net_gs_fit = CustomNetThermodynamicInformed(
 )
 # -
 
-# * Setting the Randomized Search Cross-Validation to explore the parameters in a 3-folds setting:
+# * Setting the Randomized Search Cross-Validation to explore the parameters in a 4-folds setting:
 
-ss_generator = ShuffleSplit(n_splits=3, test_size=test_size, random_state=1)
+ss_generator = ShuffleSplit(n_splits=4, test_size=test_size, random_state=1)
 
 # +
-lr_values = np.random.uniform(1e-5, 1e-1, 25).tolist()
-lambda1_values = np.random.uniform(0.001, 5e1, 25).tolist()
+lr_values = np.random.uniform(1e-5, 2e-1, 30).tolist()
+lambda1_values = np.random.uniform(0.001, 5e1, 30).tolist()
 params = {
     'lr': lr_values,
     'lambda1': lambda1_values,
