@@ -30,7 +30,7 @@ from tqdm.auto import tqdm
 
 import sklearn
 from sklearn.model_selection import train_test_split
-from sklearn.model_selection import cross_val_score, ShuffleSplit
+from sklearn.model_selection import cross_val_score, ShuffleSplit, RandomizedSearchCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import OneHotEncoder
@@ -317,6 +317,7 @@ class TqdmCallback(Callback):
 # * Early stopping callback:
 
 max_epochs = 20000
+# max_epochs = 10
 rel_error_stop_criterion = 1e-8
 min_percentage_of_num_epochs = 0.2
 early_stopping = skorch.callbacks.EarlyStopping(
@@ -324,14 +325,78 @@ early_stopping = skorch.callbacks.EarlyStopping(
     threshold=rel_error_stop_criterion
 )
 
+# ### Hyper-parameter optimization
+#
+# Before run a full NN models, let's find the best parameters to configure our NN model beforehand.
+
+# * The reduced NN model:
+
+# +
+max_epochs_gs = 2000
+rel_error_stop_criterion_gs = 1e-5
+min_percentage_of_num_epochs_gs = 0.1
+early_stopping_gs = skorch.callbacks.EarlyStopping(
+    patience=int(min_percentage_of_num_epochs_gs * max_epochs_gs), 
+    threshold=rel_error_stop_criterion_gs
+)
+
+
+net_gs_fit = CustomNetThermodynamicInformed(
+    module=NetArchitecture,
+    lambda1=1e1,
+    max_epochs=max_epochs_gs,
+    lr=1e-2,
+    batch_size=X_train_rescaled.shape[0],
+    optimizer=torch.optim.Adam,
+    callbacks=[early_stopping_gs],
+    device='cuda' if torch.cuda.is_available() else 'cpu',
+    verbose=False
+)
+# -
+
+# * Setting the Randomized Search Cross-Validation to explore the parameters:
+
+# +
+lr_values = np.random.uniform(1e-7, 1e-1, 100).tolist()
+lambda1_values = np.random.uniform(0.001, 1e3, 100).tolist()
+params = {
+    'lr': lr_values,
+    'lambda1': lambda1_values,
+}
+
+gs = RandomizedSearchCV(net_gs_fit, params, cv=4, n_iter=20, random_state=42, verbose=3)
+# -
+
+# * Search the best parameters using the reduced model:
+
+# +
+X_full_rescaled = scaler.transform(X_encoded)
+
+gs.fit(
+    X_full_rescaled.to_numpy().astype(np.float32),
+    y.to_numpy().astype(np.float32)
+)
+# -
+
+# * Collecting the results:
+
+# +
+best_lambda1 = gs.best_params_['lambda1']
+best_lr = gs.best_params_['lr']
+
+print(f"Best lambda1 = {best_lambda1}\t Best lr = {best_lr}")
+# -
+
+# ### Setting the complete NN model:
+
 # Initialize the NN with skorch:
 
 torch.manual_seed = 42
 net = CustomNetThermodynamicInformed(
     module=NetArchitecture,
-    lambda1=1e1,
+    lambda1=best_lambda1,
     max_epochs=max_epochs,
-    lr=1e-2,
+    lr=best_lr,
     batch_size=X_train_rescaled.shape[0],
     optimizer=torch.optim.Adam,
     callbacks=[r2_scoring, TqdmCallback(), early_stopping],
@@ -439,29 +504,6 @@ fig.update_layout(
 fig.update_yaxes(range=[0.0, 1.0])
 
 fig.show()
-# -
-
-# ### Shuffle Split Cross Validation
-
-# Set the cross-validation generator. In this case, we are using the `ShuffleSplit` due to the diverse nature of the data.
-
-# +
-# ss_generator = ShuffleSplit(n_splits=8, test_size=test_size, random_state=1)
-# -
-
-# Running cross-validation realizations:
-
-# +
-# available_cpus = mp.cpu_count()
-# parallel_jobs_CV = available_cpus - 2
-# X_full_rescaled = scaler.transform(X_encoded)
-# scores = cross_val_score(regr, X_full_rescaled, y, cv=ss_generator, n_jobs=parallel_jobs_CV)
-
-# +
-# scores
-
-# +
-# print(f"R2 Score mean: {scores.mean()}\t R2 Score std-dev: {scores.std()}")
 # -
 
 # ### MLP model setup with `sklearn`
