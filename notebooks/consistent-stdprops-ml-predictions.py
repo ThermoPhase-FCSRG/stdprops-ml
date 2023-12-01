@@ -20,6 +20,12 @@
 # ## Required dependencies
 
 # +
+import os
+# Should be set before importing numpy
+# This setup decreased the run times by near 3 times
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OMP_WAIT_POLICY"] = "PASSIVE"
+
 import multiprocessing as mp
 import numpy as np
 import pandas as pd
@@ -42,13 +48,19 @@ from skorch import NeuralNetRegressor
 from skorch.callbacks import Callback, EpochScoring
 
 from pathlib import Path
-import os
 
 DATA_PATH = Path(os.environ.get("DATAPATH"))
 sklearn.set_config(transform_output="pandas")
 
 pio.renderers.default = "png"
+np.random.seed(1)  # for reproducibility
 # -
+
+# Set the number of threads to be used by `PyTorch`:
+
+available_cpus = mp.cpu_count()
+parallel_jobs = available_cpus - 2 if available_cpus > 2 else 1
+torch.set_num_threads(parallel_jobs)
 
 # Check if PyTorch can use CUDA:
 
@@ -186,7 +198,7 @@ state_renamings = {
     "cr4": "cr",
     "l3": "l",
 }
-# X.replace(state_renamings, inplace=True)
+X.replace(state_renamings, inplace=True)
 
 # +
 encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
@@ -245,10 +257,13 @@ class NetArchitecture(nn.Module):
         self.hidden_layer2 = nn.Linear(30, 20)
         self.hidden_layer3 = nn.Linear(20, 10)
         self.output_layer = nn.Linear(10, 4)
+        
+        # self.dropout = nn.Dropout(0.25)  # benefits are not evident
 
     def forward(self, x):
         x = torch.relu(self.input_layer(x))
         x = torch.relu(self.hidden_layer1(x))
+        # x = self.dropout(x)
         x = torch.relu(self.hidden_layer2(x))
         x = torch.relu(self.hidden_layer3(x))
         x = self.output_layer(x)
@@ -319,7 +334,7 @@ class TqdmCallback(Callback):
 max_epochs = 20000
 # max_epochs = 10
 rel_error_stop_criterion = 1e-8
-min_percentage_of_num_epochs = 0.25
+min_percentage_of_num_epochs = 0.2
 early_stopping = skorch.callbacks.EarlyStopping(
     patience=int(min_percentage_of_num_epochs * max_epochs), 
     threshold=rel_error_stop_criterion
@@ -333,17 +348,17 @@ early_stopping = skorch.callbacks.EarlyStopping(
 
 # +
 max_epochs_gs = 3000
-rel_error_stop_criterion_gs = 1e-5
-min_percentage_of_num_epochs_gs = 0.1
+rel_error_stop_criterion_gs = 1e-7
+min_percentage_of_num_epochs_gs = 0.15
 early_stopping_gs = skorch.callbacks.EarlyStopping(
     patience=int(min_percentage_of_num_epochs_gs * max_epochs_gs), 
     threshold=rel_error_stop_criterion_gs
 )
 
-
+lambda1 = 1e1
 net_gs_fit = CustomNetThermodynamicInformed(
     module=NetArchitecture,
-    lambda1=1e1,
+    lambda1=lambda1,
     max_epochs=max_epochs_gs,
     lr=1e-2,
     batch_size=X_train_rescaled.shape[0],
@@ -360,10 +375,10 @@ ss_generator = ShuffleSplit(n_splits=4, test_size=test_size, random_state=1)
 
 # +
 lr_values = np.random.uniform(1e-5, 2e-1, 30).tolist()
-lambda1_values = np.random.uniform(0.001, 5e1, 30).tolist()
+# lambda1_values = np.random.uniform(0.001, 5e1, 30).tolist()  # not a hyper-parameter!
 params = {
     'lr': lr_values,
-    'lambda1': lambda1_values,
+    # 'lambda1': lambda1_values,  # in fact, this is not a hyper-parameter since it changes the fobj
 }
 
 gs = RandomizedSearchCV(net_gs_fit, params, cv=ss_generator, n_iter=10, random_state=42, verbose=3)
@@ -388,10 +403,11 @@ df_parameter_search
 # * Collecting the results:
 
 # +
-best_lambda1 = gs.best_params_['lambda1']
+# best_lambda1 = gs.best_params_['lambda1']  # not a hyper-parameter!
 best_lr = gs.best_params_['lr']
 
-print(f"Best lambda1 = {best_lambda1}\t Best lr = {best_lr}")
+# print(f"Best lambda1 = {best_lambda1}\t Best lr = {best_lr}")
+print(f"Best lr = {best_lr}")
 # -
 
 # ### Setting the complete NN model:
@@ -401,7 +417,7 @@ print(f"Best lambda1 = {best_lambda1}\t Best lr = {best_lr}")
 torch.manual_seed = 42
 net = CustomNetThermodynamicInformed(
     module=NetArchitecture,
-    lambda1=best_lambda1,
+    lambda1=lambda1,
     max_epochs=max_epochs,
     lr=best_lr,
     batch_size=X_train_rescaled.shape[0],
@@ -518,12 +534,13 @@ fig.show()
 regr = MLPRegressor(	
     solver='adam',
     learning_rate='adaptive',
-    hidden_layer_sizes=(20, 30, 20, 10),  # 20:30:20:10 architecture
+    hidden_layer_sizes=(20, 30, 20, 10),  # 30:30:20:10 architecture
     random_state=1, 
     max_iter=max_epochs,
     tol=rel_error_stop_criterion,
     n_iter_no_change=int(min_percentage_of_num_epochs * max_epochs),
-    early_stopping=True
+    early_stopping=True,
+    verbose=True
 )
 
 regr.fit(X_train_rescaled, y_train)
@@ -1130,7 +1147,7 @@ fig.show()
 fig = go.Figure()
 
 fig1 = go.Histogram(x=df_predicted_species_sklearn["GHS residual"], name='Unconstrained')
-fig2 = go.Histogram(x=df_predicted_species["GHS residual"], name='Constrained')
+fig2 = go.Histogram(x=df_predicted_species["GHS residual"], name='GHS Constrained')
 
 fig.add_traces([fig1, fig2])
 
