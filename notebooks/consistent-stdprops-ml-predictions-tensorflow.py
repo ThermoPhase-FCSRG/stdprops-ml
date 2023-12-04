@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.15.2
+#       jupytext_version: 1.16.0
 #   kernelspec:
 #     display_name: stdprops
 #     language: python
@@ -429,7 +429,7 @@ wrapped_model = KerasRegressorWrapper(
     X_original=X_encoded, 
     learning_rate=0.001, 
     epochs=max_epochs_gs,
-    batch_size=32,
+    batch_size=X_train_rescaled.shape[0],
     parallel_jobs=parallel_jobs
 )
 
@@ -490,7 +490,7 @@ model.compile(optimizer=adam_optimizer, loss='mse')
 history = model.fit(
     [X_train_rescaled, X_train], 
     y_train, 
-    batch_size=64,
+    batch_size=X_train_rescaled.shape[0],
     epochs=max_epochs, 
     validation_split=0.1,  # to match with PyTorch's approach
     callbacks=[early_stopping, TqdmSingleBarCallback(max_epochs)],
