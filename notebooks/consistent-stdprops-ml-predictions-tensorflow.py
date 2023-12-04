@@ -31,6 +31,7 @@ import plotly.io as pio
 from tqdm.auto import tqdm
 
 import sklearn
+from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import cross_val_score, ShuffleSplit, RandomizedSearchCV
 from sklearn.preprocessing import StandardScaler
@@ -333,14 +334,163 @@ early_stopping = EarlyStopping(
     mode='auto',
 )
 
+# ### Hyperparameter tuning
+#
+# Before run a full NN models, let's find the best parameters to configure our NN model beforehand.
+
+# * Reduced configuration to run K-folds cross validations parameter searches:
+
+max_epochs_gs = 3000
+min_percentage_of_num_epochs_gs = 0.15
+patience_gs = int(max_epochs_gs * min_percentage_of_num_epochs_gs)
+early_stopping_gs = EarlyStopping(
+    monitor="loss",
+    patience=patience_gs,
+    verbose=1,
+    mode='auto',
+)
+
+
+# `sklearn`-compatible model wrapper:
+
+# +
+def create_model(X_scaled_and_unscaled: list, learning_rate: float = 0.001):
+    X_scaled, X_unscaled = X_scaled_and_unscaled
+    input_tensor_scaled = Input(shape=(X_scaled.shape[1],))
+    input_tensor_unscaled = Input(shape=(X_unscaled.shape[1],))
+
+    x = Dense(20, activation='relu')(input_tensor_scaled)
+    x = Dense(30, activation='relu')(x)
+    x = Dense(20, activation='relu')(x)
+    x = Dense(10, activation='relu')(x)
+    y_pred = Dense(4)(x)
+
+    custom_loss_layer = CustomLossLayer()([y_pred, input_tensor_unscaled])
+    adam_optimizer = Adam(learning_rate=learning_rate)
+    model = Model(inputs=[input_tensor_scaled, input_tensor_unscaled], outputs=custom_loss_layer)
+    model.compile(optimizer=adam_optimizer, loss='mean_squared_error')
+    return model
+
+
+class KerasRegressorWrapper(BaseEstimator, RegressorMixin):
+    def __init__(
+            self, 
+            model_compiler, 
+            X_original, 
+            learning_rate=0.001, 
+            epochs=100, 
+            batch_size=32,
+            parallel_jobs=-1, 
+            verbose=0,
+        ):
+        self.model_compiler = model_compiler
+        self.X_original = X_original
+        self.scaler = StandardScaler().fit(X_original)
+        self.learning_rate = learning_rate
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.verbose = verbose
+        self.parallel_jobs = parallel_jobs
+        self.model = None
+
+    def fit(self, X, y):
+        X_unscaled = self.scaler.inverse_transform(X)
+        self.model = self.model_compiler(
+            [X, X_unscaled],
+            learning_rate=self.learning_rate
+        )
+        self.model.fit(
+            [X, X_unscaled], 
+            y, 
+            batch_size=self.batch_size,
+            epochs=self.epochs, 
+            validation_split=0.1,  # to match with PyTorch's approach
+            callbacks=[early_stopping_gs],
+            workers=self.parallel_jobs, 
+            verbose=self.verbose
+        )
+        return self
+
+    def predict(self, X):
+        X_unscaled = self.scaler.inverse_transform(X)
+        return self.model.predict([X, X_unscaled], verbose=self.verbose)
+
+    def score(self, X, y):
+        X_unscaled = self.scaler.inverse_transform(X)
+        y_pred = self.model.predict([X, X_unscaled], verbose=self.verbose)
+        return r2_score(y, y_pred)
+
+
+# -
+
+model_compiler = create_model
+wrapped_model = KerasRegressorWrapper(
+    model_compiler, 
+    X_original=X_encoded, 
+    learning_rate=0.001, 
+    epochs=max_epochs_gs,
+    batch_size=32,
+    parallel_jobs=parallel_jobs
+)
+
+# Performing Cross-Validation Randomized Search from `sklearn`:
+
+# 4-folds Shuffling
+ss_generator = ShuffleSplit(n_splits=4, test_size=test_size, random_state=1)
+
+# +
+lr_values = np.random.uniform(1e-5, 2e-1, 30).tolist()
+param_grid = {
+    'learning_rate': lr_values,
+}
+
+gs = RandomizedSearchCV(
+    estimator=wrapped_model, 
+    param_distributions=param_grid, 
+    cv=ss_generator, 
+    n_iter=10, 
+    random_state=42, 
+    verbose=3
+)
+# -
+
+# Searching the best learning rate parameter value:
+
+X_full_rescaled = scaler.transform(X_encoded)
+gs.fit(
+    X_full_rescaled,
+    y
+)
+
+# +
+df_parameter_search = pd.DataFrame.from_dict(gs.cv_results_)
+
+df_parameter_search
+# -
+
+# Collecting the results:
+
+# +
+best_lr = gs.best_params_['learning_rate']
+
+print(f"Best lr = {best_lr}")
+# -
+
 # ### Training/testing the model
+
+# Initialize and compile the model: 
+
+lr_value = best_lr
+adam_optimizer = Adam(learning_rate=lr_value)
+model = Model(inputs=[input_tensor_scaled, input_tensor_unscaled], outputs=custom_loss_layer)
+model.compile(optimizer=adam_optimizer, loss='mse')
 
 # Perform training:
 
 history = model.fit(
     [X_train_rescaled, X_train], 
     y_train, 
-    batch_size=X_train_rescaled.shape[0],
+    batch_size=64,
     epochs=max_epochs, 
     validation_split=0.1,  # to match with PyTorch's approach
     callbacks=[early_stopping, TqdmSingleBarCallback(max_epochs)],
