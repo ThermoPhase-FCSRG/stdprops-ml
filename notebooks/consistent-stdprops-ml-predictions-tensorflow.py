@@ -276,15 +276,9 @@ x = Dense(10, activation='relu')(x)
 y_pred = Dense(4)(x)
 
 custom_loss_layer = CustomLossLayer()([y_pred, input_tensor_unscaled])
+
+
 # -
-
-# Initialize and compile the model:
-
-lr_value = 0.0339  # based on the torch approach
-adam_optimizer = Adam(learning_rate=lr_value)
-model = Model(inputs=[input_tensor_scaled, input_tensor_unscaled], outputs=custom_loss_layer)
-model.compile(optimizer=adam_optimizer, loss='mse')
-
 
 # Convenient callback functions:
 
@@ -325,7 +319,7 @@ class TqdmSingleBarCallback(Callback):
 # * Early stopping callback:
 
 max_epochs = 20000
-min_percentage_of_num_epochs = 0.2
+min_percentage_of_num_epochs = 0.1
 patience = int(max_epochs * min_percentage_of_num_epochs)
 early_stopping = EarlyStopping(
     monitor="loss",
@@ -341,7 +335,7 @@ early_stopping = EarlyStopping(
 # * Reduced configuration to run K-folds cross validations parameter searches:
 
 max_epochs_gs = 3000
-min_percentage_of_num_epochs_gs = 0.15
+min_percentage_of_num_epochs_gs = 0.1
 patience_gs = int(max_epochs_gs * min_percentage_of_num_epochs_gs)
 early_stopping_gs = EarlyStopping(
     monitor="loss",
@@ -382,6 +376,7 @@ class KerasRegressorWrapper(BaseEstimator, RegressorMixin):
             batch_size=32,
             parallel_jobs=-1, 
             verbose=0,
+            score_type="mse",
         ):
         self.model_compiler = model_compiler
         self.X_original = X_original
@@ -392,6 +387,7 @@ class KerasRegressorWrapper(BaseEstimator, RegressorMixin):
         self.verbose = verbose
         self.parallel_jobs = parallel_jobs
         self.model = None
+        self.score_type = score_type
 
     def fit(self, X, y):
         X_unscaled = self.scaler.inverse_transform(X)
@@ -417,8 +413,14 @@ class KerasRegressorWrapper(BaseEstimator, RegressorMixin):
 
     def score(self, X, y):
         X_unscaled = self.scaler.inverse_transform(X)
-        y_pred = self.model.predict([X, X_unscaled], verbose=self.verbose)
-        return r2_score(y, y_pred)
+        if self.score_type == "r2":
+            y_pred = self.model.predict([X, X_unscaled], verbose=self.verbose)
+            score = r2_score(y, y_pred)
+        elif self.score_type == "mse":
+            score = self.model.evaluate([X, X_unscaled], y, verbose=self.verbose)
+        else:
+            raise ValueError(f"Unavailable score: {self.score_type}")
+        return score
 
 
 # -
@@ -430,7 +432,8 @@ wrapped_model = KerasRegressorWrapper(
     learning_rate=0.001, 
     epochs=max_epochs_gs,
     batch_size=X_train_rescaled.shape[0],
-    parallel_jobs=parallel_jobs
+    parallel_jobs=parallel_jobs,
+    score_type="mse"
 )
 
 # Performing Cross-Validation Randomized Search from `sklearn`:
