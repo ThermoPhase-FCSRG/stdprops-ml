@@ -265,12 +265,26 @@ class NetArchitecture(nn.Module):
         self.hidden_layer3 = nn.Linear(20, 10)
         self.output_layer = nn.Linear(10, num_targets)
         
-        # self.dropout = nn.Dropout(0.25)  # benefits are not evident
+        # Use the same initial weights and biases as tensorflow
+        self.initialize_weights_and_biases()
 
+    def initialize_weights_and_biases(self):
+        '''
+        Convenient automatic initialization of weights and biases.
+        
+        This sets the same initialization used in TensorFlow.
+        Good to compare the performance.
+        '''
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                # Initialize weights with Xavier uniform (Glorot uniform)
+                nn.init.xavier_uniform_(module.weight)
+                # Initialize bias to zeros
+                nn.init.zeros_(module.bias)
+                
     def forward(self, x):
         x = torch.relu(self.input_layer(x))
         x = torch.relu(self.hidden_layer1(x))
-        # x = self.dropout(x)
         x = torch.relu(self.hidden_layer2(x))
         x = torch.relu(self.hidden_layer3(x))
         x = self.output_layer(x)
