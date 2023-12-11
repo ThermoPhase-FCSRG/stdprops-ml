@@ -1,0 +1,35 @@
+name: stdprops-torch
+channels:
+  - conda-forge
+
+dependencies:
+  # General
+  - python
+  - jupyter
+  - jupytext
+  - tqdm
+
+  # Scientific stack
+  - python
+  - numpy
+  - pandas
+  - scikit-learn
+  - openpyxl
+  - skorch
+  - pytorch
+
+  # GPU to accelerate Torch
+  - cudatoolkit
+
+  # Plots
+  - plotly
+  - seaborn
+  - matplotlib
+  
+  # Extra deps with pip (unfortunately, not recommended)
+  - pip
+  - pip:
+    - kaleido
+
+environment:
+  DATAPATH: {{ root }}/data
