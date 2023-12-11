@@ -32,6 +32,7 @@ from tqdm.auto import tqdm
 
 import sklearn
 from sklearn.base import BaseEstimator, RegressorMixin
+from sklearn.metrics import make_scorer
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import cross_val_score, ShuffleSplit, RandomizedSearchCV
 from sklearn.preprocessing import StandardScaler
@@ -328,9 +329,18 @@ early_stopping = EarlyStopping(
     mode='auto',
 )
 
+
 # ### Hyperparameter tuning
 #
 # Before run a full NN models, let's find the best parameters to configure our NN model beforehand.
+
+# * Convenient function to use the loss function as score:
+
+def custom_loss_scorer(estimator, X, y):
+    X_unscaled = estimator.scaler.inverse_transform(X)
+    loss = estimator.model.evaluate([X, X_unscaled], y, verbose=0)
+    return -loss  # Negative because lower loss is better
+
 
 # * Reduced configuration to run K-folds cross validations parameter searches:
 
@@ -417,7 +427,7 @@ class KerasRegressorWrapper(BaseEstimator, RegressorMixin):
             y_pred = self.model.predict([X, X_unscaled], verbose=self.verbose)
             score = r2_score(y, y_pred)
         elif self.score_type == "mse":
-            score = self.model.evaluate([X, X_unscaled], y, verbose=self.verbose)
+            score = -self.model.evaluate([X, X_unscaled], y, verbose=self.verbose)
         else:
             raise ValueError(f"Unavailable score: {self.score_type}")
         return score
@@ -450,6 +460,8 @@ param_grid = {
 gs = RandomizedSearchCV(
     estimator=wrapped_model, 
     param_distributions=param_grid, 
+    scoring={"r2": "r2", "Constrained Loss": custom_loss_scorer},
+    refit="Constrained Loss",
     cv=ss_generator, 
     n_iter=10, 
     random_state=42, 
@@ -1467,10 +1479,11 @@ fig.show()
 # +
 fig = go.Figure()
 
-fig1 = go.Histogram(x=df_predicted_species_unconstrained["GHS residual"], name='Unconstrained')
-fig2 = go.Histogram(x=df_predicted_species["GHS residual"], name='GHS Constrained')
+fig1 = go.Histogram(x=df_expected_stdprops["GHS residual"], name='Actual GHS residuals')
+fig2 = go.Histogram(x=df_predicted_species_unconstrained["GHS residual"], name='Unconstrained')
+fig3 = go.Histogram(x=df_predicted_species["GHS residual"], name='GHS Constrained')
 
-fig.add_traces([fig1, fig2])
+fig.add_traces([fig1, fig2, fig3])
 
 fig.update_layout(
     # title="GHS residuals",
