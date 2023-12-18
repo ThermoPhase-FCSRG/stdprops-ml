@@ -29,9 +29,9 @@ os.environ["OMP_WAIT_POLICY"] = "PASSIVE"
 import multiprocessing as mp
 import numpy as np
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 import plotly.io as pio
+from plotly.subplots import make_subplots
 import random
 from tqdm.auto import tqdm
 
@@ -450,7 +450,7 @@ ss_generator = ShuffleSplit(n_splits=4, test_size=test_size, random_state=1)
 
 # +
 lr_values = np.random.uniform(1e-5, 2e-1, 30).tolist()
-# lambda1_values = np.random.uniform(0.001, 5e1, 30).tolist()  # not a hyper-parameter!
+# lambda1_values = np.random.uniform(0.1, 1e2, 30).tolist()  # not a hyper-parameter!
 params = {
     'lr': lr_values,
     # 'lambda1': lambda1_values,  # in fact, this is not a hyper-parameter since it changes the fobj
@@ -488,10 +488,10 @@ df_parameter_search
 
 # +
 # best_lambda1 = gs.best_params_['lambda1']  # not a hyper-parameter!
+best_lambda1 = lambda1
 best_lr = gs.best_params_['lr']
 
-# print(f"Best lambda1 = {best_lambda1}\t Best lr = {best_lr}")
-print(f"Best lr = {best_lr}")
+print(f"Best lambda1 = {best_lambda1}\t Best lr = {best_lr}")
 # -
 
 # ### Setting the complete NN model:
@@ -501,7 +501,7 @@ print(f"Best lr = {best_lr}")
 net = CustomNetThermodynamicInformed(
     module=NetArchitecture,
     criterion=nn.MSELoss(),
-    lambda1=lambda1,
+    lambda1=best_lambda1,
     max_epochs=max_epochs,
     lr=best_lr,
     batch_size=X_train_rescaled.shape[0],
@@ -615,6 +615,7 @@ fig.show()
 
 net_unconstrained = NeuralNetRegressor(
     module=NetArchitecture,
+    criterion=nn.MSELoss(),
     max_epochs=max_epochs,
     lr=best_lr,
     batch_size=X_train_rescaled.shape[0],
@@ -1558,3 +1559,109 @@ fig.update_traces(opacity=0.75)
 fig.add_vline(x=0.0, line_width=3, line_dash="dash", line_color="black")
 
 fig.show()
+# -
+
+# #### Quantitative verification
+#
+# We are able to compare the improvements of the predictions using GHS-constraints by comparing the mean and std deviations of the distributions related to the different approaches.
+
+# * GHS-constrained:
+
+# +
+ghs_constrained_mean = df_predicted_species["GHS residual"].values.mean()
+ghs_constrained_std_dev = df_predicted_species["GHS residual"].values.std()
+
+print(f"Mean = {ghs_constrained_mean}\t Std-dev = {ghs_constrained_std_dev}")
+# -
+
+# * Unconstrained:
+
+# +
+unconstrained_mean = df_predicted_species_unconstrained["GHS residual"].values.mean()
+unconstrained_std_dev = df_predicted_species_unconstrained["GHS residual"].values.std()
+
+print(f"Mean = {unconstrained_mean}\t Std-dev = {unconstrained_std_dev}")
+# -
+
+# * Expected (from the database):
+
+# Firstly, let's remove some outliers:
+
+# +
+quantile_cut = 0.015
+quantile_low = df_expected_stdprops["GHS residual"].quantile(quantile_cut)
+quantile_high  = df_expected_stdprops["GHS residual"].quantile(1 - quantile_cut)
+
+df_expected_ghs_without_outliers = df_expected_stdprops[
+    (df_expected_stdprops["GHS residual"] < quantile_high) & (df_expected_stdprops["GHS residual"] > quantile_low)
+].copy()
+
+df_expected_ghs_without_outliers
+# -
+
+# Actual values from the test set without outliers:
+
+# +
+expected_mean = df_expected_ghs_without_outliers["GHS residual"].values.mean()
+expected_std_dev = df_expected_ghs_without_outliers["GHS residual"].values.std()
+
+print(f"Mean = {expected_mean}\t Std-dev = {expected_std_dev}")
+# -
+
+# Visual comparison:
+
+# +
+stats_labels = ['GHS constrained', 'Unconstrained', 'Expected']
+
+# Create figure with secondary y-axis
+fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+# Add the mean values bar chart
+fig.add_trace(
+    go.Bar(
+        x=stats_labels,
+        y=np.abs([ghs_constrained_mean, unconstrained_mean, expected_mean]),
+        name="GHS residual mean value",
+        offsetgroup=1,
+    ),
+    secondary_y=False,  # This trace goes on the primary y-axis
+)
+
+# Add the std. dev. bar chart
+fig.add_trace(
+    go.Bar(
+        x=stats_labels,
+        y=[ghs_constrained_std_dev, unconstrained_std_dev, expected_std_dev],
+        name="GHS residual std. dev.",
+        offsetgroup=2,
+    ),
+    secondary_y=True,  # This trace goes on the secondary y-axis
+)
+
+# Set y-axes titles
+fig.update_yaxes(title_text="GHS residual mean value", secondary_y=False)
+fig.update_yaxes(title_text="GHS residual std. dev.", secondary_y=True)
+
+# Calculate new x-values for the second trace to offset the bars
+offset = 0.1  # This value might need to be adjusted
+fig.update_layout(
+    xaxis=dict(
+        tickmode='array',
+        # Position the tick in the middle of the grouped bars
+        tickvals=[i + offset/2 for i in range(len(stats_labels))],
+        ticktext=stats_labels
+    ),
+    legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="left",
+        x=0.05
+    ),
+    font=dict(
+        size=18,
+    ),
+)
+
+fig.show()
+
