@@ -33,3 +33,4 @@ dependencies:
 
 environment:
   DATAPATH: {{ root }}/data
+  NOTEBOOKSPATH: {{ root }}/notebooks
