@@ -51,6 +51,7 @@ from skorch.callbacks import Callback, EpochScoring
 from pathlib import Path
 
 DATA_PATH = Path(os.environ.get("DATAPATH"))
+NOTEBOOKS_PATH = Path(os.environ.get("NOTEBOOKSPATH"))
 sklearn.set_config(transform_output="pandas")
 
 pio.renderers.default = "png"
@@ -61,6 +62,14 @@ np.random.seed(RANDOM_SEED)
 torch.manual_seed(RANDOM_SEED)
 random.seed(RANDOM_SEED)
 # -
+
+# Create Paths to store the outputs:
+
+RESULTS_PATH = Path(NOTEBOOKS_PATH / "outputs" / "consistent_ml_torch")
+RESULTS_PATH.mkdir(
+    parents=True, exist_ok=True,
+)
+is_saving_figure_enabled = True
 
 # Set the number of threads to be used by `PyTorch`:
 
@@ -348,6 +357,134 @@ class CustomNetThermodynamicInformed(NeuralNetRegressor):
 
 # -
 
+# Plotting the NN architecture:
+
+# +
+import matplotlib.pyplot as plt
+
+
+def draw_neural_net(ax, left, right, bottom, top, layer_sizes, input_labels, output_labels):
+    '''
+    Draw a neural network cartoon using matplotlib.
+    
+    :param ax: matplotlib.axes.Axes instance
+    :param left: float, leftmost node center x-coordinate
+    :param right: float, rightmost node center x-coordinate
+    :param bottom: float, bottommost node center y-coordinate
+    :param top: float, topmost node center y-coordinate
+    :param layer_sizes: list of int, size of each layer
+    :param input_labels: list of str, labels for input features
+    :param output_labels: list of str, labels for output targets
+    '''
+    v_spacing = (top - bottom)/float(max(layer_sizes))
+    h_spacing = (right - left)/float(len(layer_sizes) - 1)
+    
+    # Nodes
+    for n, layer_size in enumerate(layer_sizes):
+        layer_top = v_spacing*(layer_size - 1)/2. + (top + bottom)/2.
+        for m in range(layer_size):
+            circle = plt.Circle(
+                (n*h_spacing + left, layer_top - m*v_spacing), 
+                v_spacing/4.,
+                color='w', 
+                ec='k', 
+                zorder=4
+            )
+            ax.add_artist(circle)
+            # Annotation for the input layer
+            if n == 0 and m < len(input_labels):
+                plt.text(left - 0.025, layer_top - m*v_spacing - 0.005, input_labels[m], fontsize=12, ha='right')
+            # Annotation for hidden layers
+            elif n < len(layer_sizes) - 1:
+                annotation_y_position = layer_top + 0.035
+                plt.text(n*h_spacing + left, annotation_y_position, f'Hidden Layer {n}\n({layer_size} neurons)\nReLU', fontsize=12, ha='center')
+            # Annotation for the output layer
+            elif n == len(layer_sizes) - 1 and m < len(output_labels):
+                plt.text(n*h_spacing + left + 0.025, layer_top - m*v_spacing - 0.005, output_labels[m], fontsize=12, ha='left')
+    
+    # Connect
+    for n, (layer_size_a, layer_size_b) in enumerate(zip(layer_sizes[:-1], layer_sizes[1:])):
+        layer_top_a = v_spacing*(layer_size_a - 1)/2. + (top + bottom)/2.
+        layer_top_b = v_spacing*(layer_size_b - 1)/2. + (top + bottom)/2.
+        for m in range(layer_size_a):
+            for o in range(layer_size_b):
+                line = plt.Line2D([n*h_spacing + left, (n + 1)*h_spacing + left],
+                                  [layer_top_a - m*v_spacing, layer_top_b - o*v_spacing], c='k')
+                ax.add_artist(line)
+
+    # GHS Residual Equation Annotation
+    ghs_residual_text = r"$\Delta_{\mathrm{f}} G^{\circ}=\Delta_{\mathrm{f}} H^{\circ}-T \Delta_{\mathrm{f}} S^{\circ}$"
+    plt.text(right + 0.15, top - 0.3, ghs_residual_text, fontsize=14, ha='right')
+    plt.text(right + 0.1, top - 0.27, "Satisfying:", fontsize=14, ha='right')
+    
+    # LaTeX Annotations for the objective function
+    error_function_text = r"$f_{\text{error}} = \dfrac{1}{N_{exp}}\sum_i^{N_{exp}}" \
+                          r"\left[(\Delta G^{\circ}_{i, sim} -  \Delta G^{\circ}_{i, exp})^2" \
+                          r"+ (\Delta H^{\circ}_{i, sim} -  \Delta H^{\circ}_{i, exp})^2" \
+                          r"+ (S^{\circ}_{i, sim} -  S^{\circ}_{i, exp})^2" \
+                          r"+ (Cp^{\circ}_{i, sim} -  Cp^{\circ}_{i, exp})^2\right]$"
+    thermo_function_text = r"$f_{\text{thermo}} = \dfrac{\lambda}{N_{exp}}\sum_i^{N_{exp}}" \
+                           r"(\Delta G^{\circ}_{i, sim} - \Delta H^{\circ}_{i, sim} + T \Delta S^{\circ}_{i, sim})^2$"
+    ax.text(0.5, 0.1, error_function_text, fontsize=14, ha='center', va='top', transform=ax.transAxes, color='red')
+    ax.text(0.5, 0.055, thermo_function_text, fontsize=14, ha='center', va='top', transform=ax.transAxes, color='blue')
+    
+    # Objective Function Annotation with Different Colors
+    obj_function_text_1 = r"$f_{\text{obj}} = $"
+    obj_function_text_2 = r"$f_{\text{error}}$"
+    obj_function_text_3 = r"$ + $"
+    obj_function_text_4 = r"$f_{\text{thermo}}$"
+
+    ax.text(0.5, -0.01, obj_function_text_1, fontsize=14, ha='right', va='top', transform=ax.transAxes)
+    ax.text(0.505, -0.01, obj_function_text_2, fontsize=14, ha='left', va='top', transform=ax.transAxes, color='red')
+    ax.text(0.542, -0.01, obj_function_text_3, fontsize=14, ha='left', va='top', transform=ax.transAxes)
+    ax.text(0.56, -0.01, obj_function_text_4, fontsize=14, ha='left', va='top', transform=ax.transAxes, color='blue')
+    # obj_function_text = r"$f_{\text{obj}} = f_{\text{error}} + f_{\text{thermo}}$"
+    # ax.text(0.5, 0.0, obj_function_text, fontsize=14, ha='center', va='top', transform=ax.transAxes)
+
+
+# Define the layer sizes and labels
+layer_sizes = [11, 20, 30, 20, 10, 4]  # Adjust as needed
+input_labels = ['Molar Mass', 'Charge', 'Se', 'Num Elements', 'State_ai', 'State_am', 'State_ao', 'State_cr', 'State_cr2', 'State_g', 'State_l']
+output_labels = [r'$\Delta H^0$', r'$\Delta G^0$', r'$S^0$', r'$C_p$']
+
+# Create the figure
+fig = plt.figure(figsize=(12, 12))
+ax = fig.gca()
+ax.axis('off')
+draw_neural_net(ax, .1, .9, .1, .9, layer_sizes, input_labels, output_labels)
+
+plt.tight_layout()
+if is_saving_figure_enabled:
+    plt.savefig(RESULTS_PATH / "nn_architecture.png", dpi=600)
+
+plt.show()
+# -
+
+# The design of the objective-function is described below. The term $f_{\text{thermo}}$ is responsible to integrate the thermodynamic knowledge into the Neural Network fitting procedure.
+#
+# \begin{equation}
+# f_{\text{error}} = 
+# \dfrac{1}{N_{exp}}\sum_i^{N_{exp}}
+# \left[
+#     (\Delta G^{\circ}_{i, sim} -  \Delta G^{\circ}_{i, exp})^2
+#     + (\Delta H^{\circ}_{i, sim} -  \Delta H^{\circ}_{i, exp})^2
+#     + (S^{\circ}_{i, sim} -  S^{\circ}_{i, exp})^2
+#     + (Cp^{\circ}_{i, sim} -  Cp^{\circ}_{i, exp})^2
+# \right]
+# \end{equation}
+#
+# \begin{equation}
+# f_{\text{thermo}} = 
+# \dfrac{\lambda}{N_{exp}}\sum_i^{N_{exp}}
+#     (\Delta G^{\circ}_{i, sim} - \Delta H^{\circ}_{i, sim} + T \Delta S^{\circ}_{i, sim})^2
+# \end{equation}
+#
+# \begin{equation}
+# f_{\text{obj}} = f_{\text{error}} + f_{\text{thermo}} 
+# \end{equation}
+#
+# In the $f_{\text{thermo}}$ contribution, $\lambda$ is a penalty parameter enforcing the thermodynamic relation to be satisfied. In this work, we adopt $\lambda = 10$ through experimentation.
+
 # Convenient callback functions:
 
 # * R2 score callback:
@@ -581,6 +718,9 @@ fig.update_layout(
     )
 )
 
+if is_saving_figure_enabled:
+    fig.write_image(RESULTS_PATH / "loss_constrained.png")
+    
 fig.show()
 
 # +
@@ -608,6 +748,9 @@ fig.update_layout(
 )
 fig.update_yaxes(range=[0.0, 1.0])
 
+if is_saving_figure_enabled:
+    fig.write_image(RESULTS_PATH / "r2_constrained.png")
+    
 fig.show()
 # -
 
@@ -677,6 +820,9 @@ fig.update_layout(
     ),
 )
 
+if is_saving_figure_enabled:
+    fig.write_image(RESULTS_PATH / "loss_unconstrained.png")
+
 fig.show()
 
 # +
@@ -703,6 +849,9 @@ fig.update_layout(
     )
 )
 fig.update_yaxes(range=[0.0, 1.0])
+
+if is_saving_figure_enabled:
+    fig.write_image(RESULTS_PATH / "r2_unconstrained.png")
 
 fig.show()
 # -
@@ -785,7 +934,7 @@ fig_unconstrained = go.Scatter(
     name='Predicted (unconstrained)'
 )
 
-fig.add_traces([fig_expected, fig_unconstrained, fig_predicted])
+fig.add_traces([fig_unconstrained, fig_predicted, fig_expected])
 
 fig.update_layout(
     xaxis_title="Molar Mass",
@@ -801,6 +950,9 @@ fig.update_layout(
         x=1
     )
 )
+
+if is_saving_figure_enabled:
+    fig.write_image(RESULTS_PATH / "deltaH0_scatter.png")
 
 fig.show()
 # -
@@ -832,7 +984,7 @@ fig3 = go.Scatter(
     line=dict(color="black", dash='dash'),
 )
 
-fig.add_traces([fig1, fig2, fig3])
+fig.add_traces([fig2, fig1, fig3])
 
 fig.update_layout(
     title="Actual vs Predicted values for deltaH0",
@@ -850,6 +1002,9 @@ fig.update_layout(
         x=1
     )
 )
+
+if is_saving_figure_enabled:
+    fig.write_image(RESULTS_PATH / "deltaH0_vs_expected.png")
 
 fig.show()
 
@@ -942,7 +1097,7 @@ fig_unconstrained = go.Scatter(
     name='Predicted (unconstrained)'
 )
 
-fig.add_traces([fig_expected, fig_unconstrained, fig_predicted])
+fig.add_traces([fig_unconstrained, fig_predicted, fig_expected])
 
 fig.update_layout(
     xaxis_title="Molar Mass",
@@ -958,6 +1113,9 @@ fig.update_layout(
         x=1
     )
 )
+
+if is_saving_figure_enabled:
+    fig.write_image(RESULTS_PATH / "deltaG0_scatter.png")
 
 fig.show()
 # -
@@ -989,7 +1147,7 @@ fig3 = go.Scatter(
     line=dict(color="black", dash='dash'),
 )
 
-fig.add_traces([fig1, fig2, fig3])
+fig.add_traces([fig2, fig1, fig3])
 
 fig.update_layout(
     title="Actual vs Predicted values for deltaG0",
@@ -1006,6 +1164,9 @@ fig.update_layout(
         x=1
     )
 )
+
+if is_saving_figure_enabled:
+    fig.write_image(RESULTS_PATH / "deltaG0_vs_expected.png")
 
 fig.show()
 
@@ -1104,7 +1265,7 @@ fig_unconstrained = go.Scatter(
     name='Predicted (unconstrained)'
 )
 
-fig.add_traces([fig_expected, fig_unconstrained, fig_predicted])
+fig.add_traces([fig_unconstrained, fig_predicted, fig_expected])
 
 fig.update_layout(
     xaxis_title="Molar Mass",
@@ -1120,6 +1281,9 @@ fig.update_layout(
         x=1
     )
 )
+
+if is_saving_figure_enabled:
+    fig.write_image(RESULTS_PATH / "S0_scatter.png")
 
 fig.show()
 # -
@@ -1151,7 +1315,7 @@ fig3 = go.Scatter(
     line=dict(color="black", dash='dash'),
 )
 
-fig.add_traces([fig1, fig2, fig3])
+fig.add_traces([fig2, fig1, fig3])
 
 fig.update_layout(
     title="Actual vs Predicted values for S0",
@@ -1168,6 +1332,9 @@ fig.update_layout(
         x=1
     )
 )
+
+if is_saving_figure_enabled:
+    fig.write_image(RESULTS_PATH / "S0_vs_expected.png")
 
 fig.show()
 
@@ -1188,7 +1355,7 @@ fig2 = go.Scatter(
     mode='markers',
 )
 
-fig.add_traces([fig1, fig2])
+fig.add_traces([fig2, fig1])
 
 fig.update_layout(
     title="Rel. error vs Predicted values for S0",
@@ -1266,7 +1433,7 @@ fig_unconstrained = go.Scatter(
     name='Predicted (unconstrained)'
 )
 
-fig.add_traces([fig_expected, fig_unconstrained, fig_predicted])
+fig.add_traces([fig_unconstrained, fig_predicted, fig_expected])
 
 fig.update_layout(
     xaxis_title="Molar Mass",
@@ -1282,6 +1449,9 @@ fig.update_layout(
         x=1
     )
 )
+
+if is_saving_figure_enabled:
+    fig.write_image(RESULTS_PATH / "Cp_scatter.png")
 
 fig.show()
 # -
@@ -1313,7 +1483,7 @@ fig3 = go.Scatter(
     line=dict(color="black", dash='dash'),
 )
 
-fig.add_traces([fig1, fig2, fig3])
+fig.add_traces([fig2, fig1, fig3])
 
 fig.update_layout(
     title="Actual vs Predicted values for Cp",
@@ -1330,6 +1500,9 @@ fig.update_layout(
         x=1
     )
 )
+
+if is_saving_figure_enabled:
+    fig.write_image(RESULTS_PATH / "Cp_vs_expected.png")
 
 fig.show()
 
@@ -1558,6 +1731,9 @@ fig.update_layout(
 fig.update_traces(opacity=0.75)
 fig.add_vline(x=0.0, line_width=3, line_dash="dash", line_color="black")
 
+if is_saving_figure_enabled:
+    fig.write_image(RESULTS_PATH / "GHS_residual_comparisons.png")
+
 fig.show()
 # -
 
@@ -1621,7 +1797,10 @@ fig.add_trace(
     go.Bar(
         x=stats_labels,
         y=np.abs([ghs_constrained_mean, unconstrained_mean, expected_mean]),
-        name="GHS residual mean value",
+        text=[f'{x:.1f}' for x in np.abs([ghs_constrained_mean, unconstrained_mean, expected_mean])],
+        textposition='outside',
+        name="GHS residual absolute mean value",
+        textfont=dict(size=16),
         offsetgroup=1,
     ),
     secondary_y=False,  # This trace goes on the primary y-axis
@@ -1632,18 +1811,42 @@ fig.add_trace(
     go.Bar(
         x=stats_labels,
         y=[ghs_constrained_std_dev, unconstrained_std_dev, expected_std_dev],
+        text=[f'{x:.1f}' for x in [ghs_constrained_std_dev, unconstrained_std_dev, expected_std_dev]],
+        textposition='outside',
         name="GHS residual std. dev.",
+        textfont=dict(size=16),
         offsetgroup=2,
     ),
     secondary_y=True,  # This trace goes on the secondary y-axis
 )
 
+# Set the number of ticks you want
+num_ticks = 8
+
+# Calculate tick values for the primary y-axis
+max_primary = max(np.abs([ghs_constrained_mean, unconstrained_mean, expected_mean]))
+primary_tickvals = np.linspace(0, max_primary, num_ticks)
+
+# Calculate tick values for the secondary y-axis
+max_secondary = max([ghs_constrained_std_dev, unconstrained_std_dev, expected_std_dev])
+secondary_tickvals = np.linspace(0, max_secondary, num_ticks)
+
 # Set y-axes titles
-fig.update_yaxes(title_text="GHS residual mean value", secondary_y=False)
-fig.update_yaxes(title_text="GHS residual std. dev.", secondary_y=True)
+fig.update_yaxes(
+    title_text="GHS residual absolute mean value",
+    secondary_y=False,
+    tickvals=primary_tickvals,
+    range=[0, max_primary * 1.1],
+)
+fig.update_yaxes(
+    title_text="GHS residual std. dev.",
+    secondary_y=True,
+    tickvals=secondary_tickvals,
+    range=[0, max_secondary * 1.1]
+)
 
 # Calculate new x-values for the second trace to offset the bars
-offset = 0.1  # This value might need to be adjusted
+offset = 0.0  # This value might need to be adjusted
 fig.update_layout(
     xaxis=dict(
         tickmode='array',
@@ -1656,12 +1859,15 @@ fig.update_layout(
         yanchor="bottom",
         y=1.02,
         xanchor="left",
-        x=0.05
+        x=0.15
     ),
     font=dict(
         size=18,
     ),
+    bargap=0.1
 )
 
-fig.show()
+if is_saving_figure_enabled:
+    fig.write_image(RESULTS_PATH / "GHS_residuals_means_and_stddev.png")
 
+fig.show()
