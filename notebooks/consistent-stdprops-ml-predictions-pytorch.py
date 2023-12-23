@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.16.0
+#       jupytext_version: 1.14.1
 #   kernelspec:
 #     display_name: stdprops
 #     language: python
@@ -62,6 +62,8 @@ np.random.seed(RANDOM_SEED)
 torch.manual_seed(RANDOM_SEED)
 random.seed(RANDOM_SEED)
 # -
+
+is_hyperparams_optimization_enabled = True
 
 # Create Paths to store the outputs:
 
@@ -266,13 +268,15 @@ class NetArchitecture(nn.Module):
     """
     The neural net achitecture setup.
     """
-    def __init__(self):
+    def __init__(self, layers_units: list = [num_features, 20, 30, 20, 10, num_targets]):
         super(NetArchitecture, self).__init__()
-        self.input_layer = nn.Linear(num_features, 20)
-        self.hidden_layer1 = nn.Linear(20, 30)
-        self.hidden_layer2 = nn.Linear(30, 20)
-        self.hidden_layer3 = nn.Linear(20, 10)
-        self.output_layer = nn.Linear(10, num_targets)
+        assert len(layers_units) > 1
+        self.layers = nn.ModuleList(
+            [
+                nn.Linear(layers_units[id_layer], layers_units[id_layer + 1])
+                for id_layer in range(len(layers_units) - 1)
+            ]
+        )
         
         # Use the same initial weights and biases as tensorflow
         self.initialize_weights_and_biases()
@@ -292,11 +296,8 @@ class NetArchitecture(nn.Module):
                 nn.init.zeros_(module.bias)
                 
     def forward(self, x):
-        x = torch.relu(self.input_layer(x))
-        x = torch.relu(self.hidden_layer1(x))
-        x = torch.relu(self.hidden_layer2(x))
-        x = torch.relu(self.hidden_layer3(x))
-        x = self.output_layer(x)
+        for id_layer, layer in enumerate(self.layers):
+            x = torch.relu(layer(x)) if id_layer < len(self.layers) - 1 else layer(x)
         return x
 
 
@@ -443,7 +444,7 @@ def draw_neural_net(ax, left, right, bottom, top, layer_sizes, input_labels, out
 
 
 # Define the layer sizes and labels
-layer_sizes = [11, 20, 30, 20, 10, 4]  # Adjust as needed
+layer_sizes = [num_features, 20, 30, 20, 10, num_targets]  # Adjust as needed
 input_labels = ['Molar Mass', 'Charge', 'Se', 'Num Elements', 'State_ai', 'State_am', 'State_ao', 'State_cr', 'State_cr2', 'State_g', 'State_l']
 output_labels = [r'$\Delta H^0$', r'$\Delta G^0$', r'$S^0$', r'$C_p$']
 
@@ -560,7 +561,7 @@ early_stopping_gs = skorch.callbacks.EarlyStopping(
 )
 
 lambda1 = 1e1
-model_gs = NetArchitecture()
+model_gs = NetArchitecture(layers_units=layer_sizes)
 net_gs_fit = CustomNetThermodynamicInformed(
     module=model_gs,
     criterion=nn.MSELoss(),
@@ -610,13 +611,14 @@ gs = RandomizedSearchCV(
 # +
 X_full_rescaled = scaler.transform(X_encoded)
 
-gs.fit(
-    X_full_rescaled.to_numpy().astype(np.float32),
-    y.to_numpy().astype(np.float32)
-)
+if is_hyperparams_optimization_enabled:
+    gs.fit(
+        X_full_rescaled.to_numpy().astype(np.float32),
+        y.to_numpy().astype(np.float32)
+    )
 
 # +
-df_parameter_search = pd.DataFrame.from_dict(gs.cv_results_)
+df_parameter_search = pd.DataFrame.from_dict(gs.cv_results_) if is_hyperparams_optimization_enabled else None
 
 df_parameter_search
 # -
@@ -626,7 +628,7 @@ df_parameter_search
 # +
 # best_lambda1 = gs.best_params_['lambda1']  # not a hyper-parameter!
 best_lambda1 = lambda1
-best_lr = gs.best_params_['lr']
+best_lr = gs.best_params_['lr'] if is_hyperparams_optimization_enabled else 0.007820566098744144
 
 print(f"Best lambda1 = {best_lambda1}\t Best lr = {best_lr}")
 # -
@@ -636,7 +638,7 @@ print(f"Best lambda1 = {best_lambda1}\t Best lr = {best_lr}")
 # Initialize the NN with skorch:
 
 net = CustomNetThermodynamicInformed(
-    module=NetArchitecture,
+    module=NetArchitecture(layers_units=layer_sizes),
     criterion=nn.MSELoss(),
     lambda1=best_lambda1,
     max_epochs=max_epochs,
@@ -757,7 +759,7 @@ fig.show()
 # ### MLP model setup with `skorch`/`pytorch` without thermodynamical constrains
 
 net_unconstrained = NeuralNetRegressor(
-    module=NetArchitecture,
+    module=NetArchitecture(layers_units=layer_sizes),
     criterion=nn.MSELoss(),
     max_epochs=max_epochs,
     lr=best_lr,
