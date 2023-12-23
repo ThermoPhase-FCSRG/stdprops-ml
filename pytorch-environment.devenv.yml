@@ -4,7 +4,7 @@ channels:
 
 dependencies:
   # General
-  - python=3.12.0
+  - python=3.11.7
   - jupyter=1.0.0
   - jupytext=1.16.0
   - tqdm=4.66.1
@@ -17,12 +17,9 @@ dependencies:
   - skorch=0.15.0
   - pytorch=2.1.0
 
-  # GPU to accelerate Torch
-  - cudatoolkit=11.8.0
-
   # Plots
   - plotly=5.18.0
-  - matplotlib=3.8.2
+  - matplotlib-base=3.8.2
   
   # Extra deps with pip (unfortunately, not recommended)
   - pip=23.3.2
