@@ -1,0 +1,31 @@
+name: stdprops-torch
+channels:
+  - conda-forge
+
+dependencies:
+  # General
+  - python=3.11.7
+  - jupyter=1.0.0
+  - jupytext=1.16.0
+  - tqdm=4.66.1
+
+  # Scientific stack
+  - numpy=1.26.2
+  - pandas=2.1.4
+  - scikit-learn=1.3.2
+  - openpyxl=3.1.2
+  - skorch=0.15.0
+  - pytorch=2.1.0
+
+  # Plots
+  - plotly=5.18.0
+  - matplotlib-base=3.8.2
+  
+  # Extra deps with pip (unfortunately, not recommended)
+  - pip=23.3.2
+  - pip:
+    - kaleido==0.2.1
+
+environment:
+  DATAPATH: {{ root }}/data
+  NOTEBOOKSPATH: {{ root }}/notebooks
