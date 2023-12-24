@@ -29,6 +29,7 @@ os.environ["OMP_WAIT_POLICY"] = "PASSIVE"
 import multiprocessing as mp
 import numpy as np
 import pandas as pd
+import plotly.express as px
 import plotly.graph_objects as go
 import plotly.io as pio
 from plotly.subplots import make_subplots
@@ -63,7 +64,13 @@ torch.manual_seed(RANDOM_SEED)
 random.seed(RANDOM_SEED)
 # -
 
-is_hyperparams_optimization_enabled = True
+# Set the var below to `True` if you want to perform hyper-parameters optimization:
+
+is_hyperparams_optimization_enabled = False
+
+# Enable the var below if you want to remove GHS outliers in NIST DB:
+
+has_to_remove_outliers = True
 
 # Create Paths to store the outputs:
 
@@ -92,9 +99,9 @@ device
 # ### Loading
 
 # +
-df_nist_stdprops = pd.read_csv(DATA_PATH / "NBS_Tables_preprocessed.csv", index_col=0)
+df_nist_stdprops_original = pd.read_csv(DATA_PATH / "NBS_Tables_preprocessed.csv", index_col=0)
 
-df_nist_stdprops
+df_nist_stdprops_original
 # -
 
 # ### Extending with Se (entropy of the elements of the chemical species) and Num of Elements
@@ -157,6 +164,7 @@ def parse_chemical_formula(formula: str) -> dict[str, int]:
 # +
 Se_species = []
 n_elements_in_species = []
+df_nist_stdprops = df_nist_stdprops_original.copy(deep=True)
 for index, row in df_nist_stdprops.iterrows():
     species_formula = row["Formula"]
     elements_in_species = parse_chemical_formula(species_formula)
@@ -189,6 +197,38 @@ df_nist_stdprops.dropna(inplace=True)
 df_nist_stdprops
 # -
 
+# ### Adding GHS residuals to NIST db
+
+# +
+T = 298.15  # in K
+nist_GHS_residuals = []
+for index, row in df_nist_stdprops.iterrows():    
+    G0_nist = row["deltaG0"] * 1000
+    H0_nist = row["deltaH0"] * 1000
+    S0_nist = row["S0"]
+    Se_nist = row["Se"]
+    GHS_residual_expected = G0_nist - H0_nist + T * (S0_nist - Se_nist)
+    nist_GHS_residuals.append(GHS_residual_expected)
+    
+df_nist_stdprops["GHS residual"] = nist_GHS_residuals
+df_nist_stdprops
+# -
+
+# ### Removing outliers
+
+# +
+if has_to_remove_outliers:
+    quantile_cut = 0.025
+    quantile_low = df_nist_stdprops["GHS residual"].quantile(quantile_cut)
+    quantile_high  = df_nist_stdprops["GHS residual"].quantile(1 - quantile_cut)
+
+    df_nist_stdprops = df_nist_stdprops[
+        (df_nist_stdprops["GHS residual"] < quantile_high) & (df_nist_stdprops["GHS residual"] > quantile_low)
+    ].copy()
+
+df_nist_stdprops
+# -
+
 # ## Organizing the data
 
 # Separating features and targets:
@@ -209,13 +249,37 @@ X["State"].value_counts()
 
 state_renamings = {
     "g2": "g",
+    "cr2": "cr",
     "cr3": "cr",
     "l2": "l",
     "g3": "g",
     "cr4": "cr",
     "l3": "l",
+    "ao": "aq",
+    "ai": "aq",
 }
 X.replace(state_renamings, inplace=True)
+
+X["State"].value_counts()
+
+# +
+df_states = X["State"].value_counts().to_frame()
+fig = px.bar(
+    x=df_states.index, 
+    y=df_states.values[:, 0],
+    labels={'x': 'State of the species', 'y': 'Number of species'},
+    text_auto=True
+)
+fig.update_layout(
+    font=dict(
+        size=18,
+    )
+)
+
+if is_saving_figure_enabled:
+    fig.write_image(RESULTS_PATH / "species_states.png")
+
+fig.show()
 
 # +
 encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
@@ -445,7 +509,7 @@ def draw_neural_net(ax, left, right, bottom, top, layer_sizes, input_labels, out
 
 # Define the layer sizes and labels
 layer_sizes = [num_features, 20, 30, 20, 10, num_targets]  # Adjust as needed
-input_labels = ['Molar Mass', 'Charge', 'Se', 'Num Elements', 'State_ai', 'State_am', 'State_ao', 'State_cr', 'State_cr2', 'State_g', 'State_l']
+input_labels = list(X_train.columns)
 output_labels = [r'$\Delta H^0$', r'$\Delta G^0$', r'$S^0$', r'$C_p$']
 
 # Create the figure
@@ -519,8 +583,8 @@ class TqdmCallback(Callback):
 # * Early stopping callback:
 
 max_epochs = 20000
-rel_error_stop_criterion = 1e-8
-min_percentage_of_num_epochs = 0.1
+rel_error_stop_criterion = 1e-5
+min_percentage_of_num_epochs = 0.05
 early_stopping = skorch.callbacks.EarlyStopping(
     patience=int(min_percentage_of_num_epochs * max_epochs), 
     threshold=rel_error_stop_criterion
@@ -553,7 +617,7 @@ def custom_loss_scorer(net, X, y):
 
 # +
 max_epochs_gs = 3000
-rel_error_stop_criterion_gs = 1e-6
+rel_error_stop_criterion_gs = 1e-5
 min_percentage_of_num_epochs_gs = 0.1
 early_stopping_gs = skorch.callbacks.EarlyStopping(
     patience=int(min_percentage_of_num_epochs_gs * max_epochs_gs), 
@@ -582,12 +646,12 @@ net_gs_fit = CustomNetThermodynamicInformed(
 )
 # -
 
-# * Setting the Randomized Search Cross-Validation to explore the parameters in a 4-folds setting:
+# * Setting the Randomized Search Cross-Validation to explore the parameters in a 5-folds setting:
 
-ss_generator = ShuffleSplit(n_splits=4, test_size=test_size, random_state=1)
+ss_generator = ShuffleSplit(n_splits=5, test_size=test_size, random_state=1)
 
 # +
-lr_values = np.random.uniform(1e-5, 2e-1, 30).tolist()
+lr_values = np.random.uniform(1e-5, 2e-1, 50).tolist()
 # lambda1_values = np.random.uniform(0.1, 1e2, 30).tolist()  # not a hyper-parameter!
 params = {
     'lr': lr_values,
@@ -628,7 +692,7 @@ df_parameter_search
 # +
 # best_lambda1 = gs.best_params_['lambda1']  # not a hyper-parameter!
 best_lambda1 = lambda1
-best_lr = gs.best_params_['lr'] if is_hyperparams_optimization_enabled else 0.007820566098744144
+best_lr = gs.best_params_['lr'] if is_hyperparams_optimization_enabled else 0.01
 
 print(f"Best lambda1 = {best_lambda1}\t Best lr = {best_lr}")
 # -
