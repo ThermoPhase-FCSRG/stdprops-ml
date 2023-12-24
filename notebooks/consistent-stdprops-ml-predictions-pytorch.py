@@ -39,7 +39,7 @@ from tqdm.auto import tqdm
 import sklearn
 from sklearn.metrics import r2_score, make_scorer
 from sklearn.model_selection import train_test_split
-from sklearn.model_selection import cross_val_score, ShuffleSplit, RandomizedSearchCV
+from sklearn.model_selection import ShuffleSplit, RandomizedSearchCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import OneHotEncoder
 
@@ -226,6 +226,7 @@ if has_to_remove_outliers:
         (df_nist_stdprops["GHS residual"] < quantile_high) & (df_nist_stdprops["GHS residual"] > quantile_low)
     ].copy()
 
+df_nist_stdprops.reset_index(drop=True, inplace=True)
 df_nist_stdprops
 # -
 
@@ -583,7 +584,7 @@ class TqdmCallback(Callback):
 # * Early stopping callback:
 
 max_epochs = 20000
-rel_error_stop_criterion = 1e-5
+rel_error_stop_criterion = 1e-8
 min_percentage_of_num_epochs = 0.05
 early_stopping = skorch.callbacks.EarlyStopping(
     patience=int(min_percentage_of_num_epochs * max_epochs), 
@@ -626,6 +627,7 @@ early_stopping_gs = skorch.callbacks.EarlyStopping(
 
 lambda1 = 1e1
 model_gs = NetArchitecture(layers_units=layer_sizes)
+optimizer = torch.optim.Adam
 net_gs_fit = CustomNetThermodynamicInformed(
     module=model_gs,
     criterion=nn.MSELoss(),
@@ -639,7 +641,7 @@ net_gs_fit = CustomNetThermodynamicInformed(
     max_epochs=max_epochs_gs,
     lr=1e-2,
     batch_size=X_train_rescaled.shape[0],
-    optimizer=torch.optim.Adam,
+    optimizer=optimizer,
     callbacks=[early_stopping_gs],
     device='cpu',
     verbose=False
@@ -708,7 +710,7 @@ net = CustomNetThermodynamicInformed(
     max_epochs=max_epochs,
     lr=best_lr,
     batch_size=X_train_rescaled.shape[0],
-    optimizer=torch.optim.Adam,
+    optimizer=optimizer,
     callbacks=[r2_scoring, TqdmCallback(), early_stopping],
     # device='cuda' if torch.cuda.is_available() else 'cpu',
     device='cpu',
@@ -742,6 +744,77 @@ df_y_predict
 # Check the score:
 
 r2_score(y_test, y_predict)
+
+# ### Cross-validation score.
+#
+# Since we are unable to run it with built-in `sklearn` functions (due to an error related to pickling `skorch`/`pytorch` objects), let's implement the cross validation calculation.
+
+# +
+shuffle_split = ShuffleSplit(n_splits=5, test_size=test_size, random_state=42)
+scores = {
+    "r2": [],
+}
+
+for train_index, test_index in shuffle_split.split(X_full_rescaled, y):
+    X_train_cv, X_test_cv = X_full_rescaled.iloc[train_index], X_full_rescaled.iloc[test_index]
+    y_train_cv, y_test_cv = y.iloc[train_index], y.iloc[test_index]
+
+    # Convert to PyTorch tensors
+    X_train_torch_cv = torch.from_numpy(X_train_cv.to_numpy()).float()
+    y_train_torch_cv = torch.from_numpy(y_train_cv.to_numpy()).float()
+    X_test_torch_cv = torch.from_numpy(X_test_cv.to_numpy()).float()
+
+    # Create a new instance of the model for each fold
+    net_cv = CustomNetThermodynamicInformed(
+        module=NetArchitecture(layers_units=layer_sizes),
+        criterion=nn.MSELoss(),
+        lambda1=best_lambda1,
+        max_epochs=max_epochs,
+        lr=best_lr,
+        batch_size=X_train_cv.shape[0],
+        optimizer=torch.optim.Adam,
+        callbacks=[r2_scoring, TqdmCallback(), early_stopping],
+        device='cpu',
+        verbose=False
+    )
+
+    # Fit the model
+    net_cv.fit(X_train_torch_cv, y_train_torch_cv)
+
+    # Evaluate the model
+    y_predict_cv = net_cv.predict(X_test_torch_cv)
+    r2 = r2_score(y_test_cv, y_predict_cv)
+    scores['r2'].append(r2)
+    
+r2_mean_cv = np.mean(scores['r2'])
+# -
+
+print(f"r2 mean = {r2_mean_cv}")
+
+# +
+df_cross_val_scores = pd.DataFrame.from_dict(scores)
+df_cross_val_scores['Random Folds'] = list(df_cross_val_scores.index.to_numpy() + 1)
+
+df_cross_val_scores
+
+# +
+fig = px.bar(
+    x=df_cross_val_scores.index, 
+    y=df_cross_val_scores.loc[:, 'r2'].values,
+    labels={'x': 'Random folds', 'y': 'r2 score'},
+    text_auto='.3f'
+)
+fig.update_layout(
+    font=dict(
+        size=18,
+    )
+)
+
+if is_saving_figure_enabled:
+    fig.write_image(RESULTS_PATH / "cross_val_r2_scores.png")
+
+fig.show()
+# -
 
 # ### Evaluate the loss function evolution through the epochs
 
@@ -828,7 +901,7 @@ net_unconstrained = NeuralNetRegressor(
     max_epochs=max_epochs,
     lr=best_lr,
     batch_size=X_train_rescaled.shape[0],
-    optimizer=torch.optim.Adam,
+    optimizer=optimizer,
     callbacks=[r2_scoring, TqdmCallback(), early_stopping],
     # device='cuda' if torch.cuda.is_available() else 'cpu',
     device='cpu',
@@ -918,6 +991,148 @@ fig.update_yaxes(range=[0.0, 1.0])
 
 if is_saving_figure_enabled:
     fig.write_image(RESULTS_PATH / "r2_unconstrained.png")
+
+fig.show()
+# -
+
+# ### Cross validation
+
+# +
+scores_unconstrained = {
+    "r2": [],
+}
+
+for train_index, test_index in shuffle_split.split(X_full_rescaled, y):
+    X_train_cv, X_test_cv = X_full_rescaled.iloc[train_index], X_full_rescaled.iloc[test_index]
+    y_train_cv, y_test_cv = y.iloc[train_index], y.iloc[test_index]
+
+    # Convert to PyTorch tensors
+    X_train_torch_cv = torch.from_numpy(X_train_cv.to_numpy()).float()
+    y_train_torch_cv = torch.from_numpy(y_train_cv.to_numpy()).float()
+    X_test_torch_cv = torch.from_numpy(X_test_cv.to_numpy()).float()
+
+    # Create a new instance of the model for each fold
+    _net = NeuralNetRegressor(
+        module=NetArchitecture(layers_units=layer_sizes),
+        criterion=nn.MSELoss(),
+        max_epochs=max_epochs,
+        lr=best_lr,
+        batch_size=X_train_cv.shape[0],
+        optimizer=torch.optim.Adam,
+        callbacks=[r2_scoring, TqdmCallback(), early_stopping],
+        device='cpu',
+        verbose=False
+    )
+
+    # Fit the model
+    _net.fit(X_train_torch_cv, y_train_torch_cv)
+
+    # Evaluate the model
+    y_predict_cv = _net.predict(X_test_torch_cv)
+    r2 = r2_score(y_test_cv, y_predict_cv)
+    scores_unconstrained['r2'].append(r2)
+    
+r2_mean_cv_unconstrained = np.mean(scores_unconstrained['r2'])
+# -
+
+print(f"r2 mean = {r2_mean_cv_unconstrained}")
+
+# +
+df_cross_val_scores_unconstrained = pd.DataFrame.from_dict(scores_unconstrained)
+df_cross_val_scores_unconstrained['Random Folds'] = list(df_cross_val_scores_unconstrained.index.to_numpy() + 1)
+
+df_cross_val_scores_unconstrained
+
+# +
+fig = px.bar(
+    x=df_cross_val_scores_unconstrained.index, 
+    y=df_cross_val_scores_unconstrained.loc[:, 'r2'].values,
+    labels={'x': 'Random folds', 'y': 'r2 score'},
+    text_auto='.3f'
+)
+fig.update_layout(
+    font=dict(
+        size=18,
+    )
+)
+fig.update_yaxes(range=[0.0, 1.0])
+
+if is_saving_figure_enabled:
+    fig.write_image(RESULTS_PATH / "cross_val_r2_scores_unconstrained.png")
+
+fig.show()
+# -
+
+# ### Comparing the performance of Constrained vs Unconstrained
+#
+
+# +
+fig = go.Figure(data=[
+    go.Bar(
+        name='Unconstrained', 
+        x=df_cross_val_scores_unconstrained['Random Folds'].values, 
+        y=df_cross_val_scores_unconstrained['r2'].values,
+        texttemplate='%{y:.2f}',
+        textposition='outside'
+    ),
+    go.Bar(
+        name='GHS constrained', 
+        x=df_cross_val_scores['Random Folds'].values, 
+        y=df_cross_val_scores['r2'].values,
+        texttemplate='%{y:.2f}',
+        textposition='outside'
+    ),
+])
+
+fig.update_layout(barmode='group')
+fig.update_yaxes(range=[0.0, 1.0])
+
+fig.update_xaxes(
+    title_text="Random Folds",
+)
+fig.update_yaxes(
+    title_text="r2 score",
+    range=[0.0, 1.0]
+)
+fig.update_layout(
+    legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="center",
+        x=0.5
+    ),
+    font=dict(
+        size=18,
+    ),
+)
+
+if is_saving_figure_enabled:
+    fig.write_image(RESULTS_PATH / "constrained_vs_unconstrained_r2_scores.png")
+
+fig.show()
+
+# +
+fig = px.bar(
+    x=["Unconstrained", "GHS constrained"], 
+    y=[
+        df_cross_val_scores_unconstrained.loc[:, 'r2'].values.mean(),
+        df_cross_val_scores.loc[:, 'r2'].values.mean(),
+    ],
+    labels={'x': 'Neural Net approach', 'y': 'r2 score'},
+    text_auto='.3f',
+    color=['blue', 'red']
+)
+fig.update_layout(
+    font=dict(
+        size=18,
+    ),
+    showlegend=False
+)
+fig.update_yaxes(range=[0.0, 1.0])
+
+if is_saving_figure_enabled:
+    fig.write_image(RESULTS_PATH / "constrained_vs_unconstrained_mean_r2_scores.png")
 
 fig.show()
 # -
@@ -1672,7 +1887,7 @@ predicted_GHS_residuals_unconstrained = []
 expected_GHS_residuals = []
 df_expected_stdprops = df_nist_stdprops.loc[X_test_rescaled.index, :]
 for index, row in df_predicted_species.iterrows():
-    # Skorch
+    # GHS constrained
     G0_predicted = row["deltaG0"] * 1000
     H0_predicted = row["deltaH0"] * 1000
     S0_predicted = row["S0"]
@@ -1680,7 +1895,7 @@ for index, row in df_predicted_species.iterrows():
     GHS_residual_predicted = G0_predicted - H0_predicted + T * (S0_predicted - Se_predicted)
     predicted_GHS_residuals.append(GHS_residual_predicted)
     
-    # Sklearn
+    # Unconstrained
     G0_unconstrained = df_predicted_species_unconstrained.loc[index, "deltaG0"] * 1000
     H0_unconstrained = df_predicted_species_unconstrained.loc[index, "deltaH0"] * 1000
     S0_unconstrained = df_predicted_species_unconstrained.loc[index, "S0"]
@@ -1776,7 +1991,8 @@ fig1 = go.Histogram(x=df_expected_stdprops["GHS residual"], name='Expected GHS R
 fig2 = go.Histogram(x=df_predicted_species_unconstrained["GHS residual"], name='Unconstrained')
 fig3 = go.Histogram(x=df_predicted_species["GHS residual"], name='GHS Constrained')
 
-fig.add_traces([fig1, fig2, fig3])
+# fig.add_traces([fig1, fig2, fig3])
+fig.add_traces([fig2, fig3])
 
 fig.update_layout(
     # title="GHS residuals",
