@@ -6,7 +6,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.15.2
+#       jupytext_version: 1.16.0
 #   kernelspec:
 #     display_name: stdprops
 #     language: python
@@ -360,8 +360,8 @@ for index, row in df_nist_tables.iterrows():
     Se_species.append(elements_S0)
     n_elements_in_species.append(n_elements)
     
-df_nist_tables["Se"] = Se_species
-df_nist_tables["Num Elements"] = n_elements_in_species
+df_nist_tables.loc[:, "Se"] = Se_species
+df_nist_tables.loc[:, "Num Elements"] = n_elements_in_species
 # -
 
 df_nist_tables.head(20)
@@ -406,7 +406,7 @@ fig.show()
 fig = px.violin(df_nist_tables, x="State", y="Molar Mass", box=True, points='all')
 fig.show()
 
-# Check for (linear) correlations with Pearson's approach
+# Check for (linear) correlations with Spearman's approach
 
 # +
 df_nist_tables_numerical = df_nist_tables[numerical_columns]
@@ -690,8 +690,8 @@ for index, row in df_nist_tables.iterrows():
     is_species_aqueous = species_state in aqueous_states
     elements_in_species = parse_chemical_formula(species_formula)
     
-    species_dG0 = row["deltaG0"]
-    species_dH0 = row["deltaH0"]
+    species_dG0 = row["deltaG0"] * 1000  # convert to J/mol
+    species_dH0 = row["deltaH0"] * 1000  # convert to J/mol
     species_S0 = row["S0"]
     
     elements_S0 = 0.0
@@ -710,13 +710,13 @@ for index, row in df_nist_tables.iterrows():
     
     species_dS0 = species_S0 - elements_S0
     
-    GHS_residual = species_dG0 * 1000 - species_dH0 * 1000 + T * species_dS0
+    GHS_residual = species_dG0 - species_dH0 + T * species_dS0
     GHS_residuals.append(GHS_residual)
     
 # GHS_residuals
 
 # +
-df_nist_tables["GHS residual"] = GHS_residuals
+df_nist_tables.loc[:, "GHS residual"] = GHS_residuals
 
 df_nist_tables.head(20)
 # -
